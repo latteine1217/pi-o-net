@@ -636,17 +636,23 @@ def create_model(
     transformer_num_layers: int = 2,
     transformer_ff_dim: int = 256,
     transformer_dropout: float = 0.0,
+    use_resnet_branch: bool = False,
+    trunk_rff_features: int = 0,
+    trunk_rff_sigma: float = 1.0,
 ) -> dde.nn.pytorch.deeponet.DeepONetCartesianProd:
-    """What: 建立文獻對齊 DeepONet 模型。"""
+    """What: 建立文獻對齊 DeepONet 模型。
 
+    Why: Branch 與 Trunk 的架構選擇完全解耦，便於消融實驗。
+         Branch 優先順序：Transformer > ResNet > GatedMLP > SimpleMLP。
+         Trunk：trunk_rff_features > 0 時使用 RFF，否則退回 TimeFourier。
+    """
     if len(branch_shape) == 0:
         raise ValueError("branch_shape 不可為空。")
     branch_feature_dim = int(branch_shape[-1])
     branch_flat_dim = int(np.prod(np.asarray(branch_shape, dtype=np.int64)))
-    trunk_core_input_dim = trunk_dim + 2 * int(time_fourier_modes)
-    trunk_layers = [trunk_core_input_dim, *trunk_hidden_dims, latent_width]
     branch_layers = [branch_flat_dim, *branch_hidden_dims, latent_width]
 
+    # --- Branch ---
     if use_transformer_branch:
         branch_net = TemporalTransformerBranch(
             token_dim=branch_feature_dim,
@@ -658,6 +664,9 @@ def create_model(
             ff_dim=transformer_ff_dim,
             dropout=transformer_dropout,
         )
+    elif use_resnet_branch:
+        branch_core = ResNetBranchNet(branch_flat_dim, branch_hidden_dims, latent_width)
+        branch_net = FlattenBranchNet(branch_core)
     elif use_gated_mlp:
         branch_core = ModifiedGatedMLP(branch_layers, activation="tanh", kernel_initializer="Glorot normal")
         branch_net = FlattenBranchNet(branch_core)
@@ -665,17 +674,23 @@ def create_model(
         branch_core = SimpleMLP(branch_layers, activation="tanh", kernel_initializer="Glorot normal")
         branch_net = FlattenBranchNet(branch_core)
 
-    if use_gated_mlp:
+    # --- Trunk ---
+    if trunk_rff_features > 0:
+        trunk_core_input_dim = 2 * int(trunk_rff_features) + 8
+        trunk_layers = [trunk_core_input_dim, *trunk_hidden_dims, latent_width]
+        trunk_core = SimpleMLP(trunk_layers, activation="tanh", kernel_initializer="Glorot normal")
+        trunk_net = FourierFeatureTrunkNet(trunk_rff_features, trunk_rff_sigma, trunk_core)
+    elif use_gated_mlp:
+        trunk_core_input_dim = trunk_dim + 2 * int(time_fourier_modes)
+        trunk_layers = [trunk_core_input_dim, *trunk_hidden_dims, latent_width]
         trunk_core = ModifiedGatedMLP(trunk_layers, activation="tanh", kernel_initializer="Glorot normal")
         trunk_net = TimeFourierTrunkNet(time_fourier_modes, trunk_core)
-        return CallableTrunkDeepONetCartesianProd(
-            (branch_feature_dim, branch_net),
-            (trunk_dim, trunk_net),
-            activation="tanh",
-            kernel_initializer="Glorot normal",
-        )
-    trunk_core = SimpleMLP(trunk_layers, activation="tanh", kernel_initializer="Glorot normal")
-    trunk_net = TimeFourierTrunkNet(time_fourier_modes, trunk_core)
+    else:
+        trunk_core_input_dim = trunk_dim + 2 * int(time_fourier_modes)
+        trunk_layers = [trunk_core_input_dim, *trunk_hidden_dims, latent_width]
+        trunk_core = SimpleMLP(trunk_layers, activation="tanh", kernel_initializer="Glorot normal")
+        trunk_net = TimeFourierTrunkNet(time_fourier_modes, trunk_core)
+
     return CallableTrunkDeepONetCartesianProd(
         (branch_feature_dim, branch_net),
         (trunk_dim, trunk_net),

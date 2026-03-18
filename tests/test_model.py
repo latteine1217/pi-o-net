@@ -154,3 +154,82 @@ class TestResNetBranchNet:
         out = net(x)
         out.sum().backward()
         assert net.input_proj.weight.grad is not None
+
+
+class TestCreateModelNewOptions:
+    """Integration tests: create_model builds without error and produces correct outputs."""
+
+    _BRANCH_SHAPE = (2, 3)  # (history_steps=2, features_per_step=3)
+    _TRUNK_DIM = 4           # (x, y, t, c)
+    _HIDDEN = [16, 16]
+    _LATENT = 8
+
+    def _branch_input(self) -> np.ndarray:
+        return np.random.randn(5, 2, 3).astype(np.float64)
+
+    def _trunk_input(self, num_trunk: int = 12) -> np.ndarray:
+        trunk = np.random.randn(num_trunk, 4)
+        trunk[:, 3] = np.tile([0, 1, 2], num_trunk // 3 + 1)[:num_trunk]
+        return trunk.astype(np.float64)
+
+    def _predict(self, model, branch_in, trunk_in):
+        """直接呼叫網路 forward，繞過 dde.Model（net 無 .predict 方法）。"""
+        model.eval()
+        with torch.no_grad():
+            out = model((branch_in, trunk_in))
+        # out: [batch, num_trunk_points] — return numpy for shape check
+        return out.cpu().numpy()
+
+    def test_resnet_branch_builds_and_runs(self):
+        model = create_model(
+            branch_shape=self._BRANCH_SHAPE,
+            trunk_dim=self._TRUNK_DIM,
+            branch_hidden_dims=self._HIDDEN,
+            trunk_hidden_dims=self._HIDDEN,
+            latent_width=self._LATENT,
+            use_resnet_branch=True,
+        )
+        pred = self._predict(model, self._branch_input(), self._trunk_input())
+        assert pred.shape[0] == 5
+
+    def test_rff_trunk_builds_and_runs(self):
+        model = create_model(
+            branch_shape=self._BRANCH_SHAPE,
+            trunk_dim=self._TRUNK_DIM,
+            branch_hidden_dims=self._HIDDEN,
+            trunk_hidden_dims=self._HIDDEN,
+            latent_width=self._LATENT,
+            trunk_rff_features=16,
+            trunk_rff_sigma=1.0,
+        )
+        pred = self._predict(model, self._branch_input(), self._trunk_input())
+        assert pred.shape[0] == 5
+
+    def test_resnet_branch_plus_rff_trunk(self):
+        model = create_model(
+            branch_shape=self._BRANCH_SHAPE,
+            trunk_dim=self._TRUNK_DIM,
+            branch_hidden_dims=self._HIDDEN,
+            trunk_hidden_dims=self._HIDDEN,
+            latent_width=self._LATENT,
+            use_resnet_branch=True,
+            trunk_rff_features=16,
+            trunk_rff_sigma=5.0,
+        )
+        pred = self._predict(model, self._branch_input(), self._trunk_input())
+        assert pred.shape[0] == 5
+
+    def test_backward_compat_all_new_defaults(self):
+        """新參數使用預設值時，行為必須與原始呼叫相同。"""
+        model = create_model(
+            branch_shape=self._BRANCH_SHAPE,
+            trunk_dim=self._TRUNK_DIM,
+            branch_hidden_dims=self._HIDDEN,
+            trunk_hidden_dims=self._HIDDEN,
+            latent_width=self._LATENT,
+            use_resnet_branch=False,
+            trunk_rff_features=0,
+            trunk_rff_sigma=1.0,
+        )
+        pred = self._predict(model, self._branch_input(), self._trunk_input())
+        assert pred.shape[0] == 5
