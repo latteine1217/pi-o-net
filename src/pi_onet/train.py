@@ -367,6 +367,79 @@ class FlattenBranchNet(torch.nn.Module):
         return self.core_net(flat)
 
 
+class ResNetBlock(torch.nn.Module):
+    """What: Pre-activation ResNet block (He v2)。
+
+    Why: Identity path `x + block(x)` 確保梯度從 output 直通至 input projection，
+         不受深度影響。LayerNorm → Tanh → Linear × 2 是 He v2 的標準順序。
+    """
+
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        dim = int(hidden_dim)
+        self.norm1 = torch.nn.LayerNorm(dim, dtype=dde_config.real(torch))
+        self.linear1 = torch.nn.Linear(dim, dim, dtype=dde_config.real(torch))
+        self.norm2 = torch.nn.LayerNorm(dim, dtype=dde_config.real(torch))
+        self.linear2 = torch.nn.Linear(dim, dim, dtype=dde_config.real(torch))
+        torch.nn.init.xavier_uniform_(self.linear1.weight)
+        torch.nn.init.zeros_(self.linear1.bias)
+        torch.nn.init.xavier_uniform_(self.linear2.weight)
+        torch.nn.init.zeros_(self.linear2.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = torch.tanh(self.norm1(x))
+        h = self.linear1(h)
+        h = torch.tanh(self.norm2(h))
+        h = self.linear2(h)
+        return x + h
+
+
+class ResNetBranchNet(torch.nn.Module):
+    """What: Pre-activation ResNet branch encoder。
+
+    Why: 高維感測器序列（~7500 維）的梯度不穩定問題，需要 identity path 解決。
+         Kaiming Normal 初始化 input projection，確保第一層不出現梯度爆炸。
+         branch_hidden_dims 全部相同時，skip connection 不需額外 projection 層。
+    """
+
+    def __init__(self, flat_dim: int, hidden_dims: list[int], latent_width: int) -> None:
+        super().__init__()
+        if len(hidden_dims) == 0:
+            raise ValueError("ResNetBranchNet 需要至少一個 hidden dim。")
+        if len(set(hidden_dims)) != 1:
+            raise ValueError(
+                "ResNetBranchNet 要求 branch_hidden_dims 全部相同，例如 [512, 512]。"
+            )
+        hidden_dim = int(hidden_dims[0])
+        num_blocks = len(hidden_dims)
+
+        # Input projection: flat_dim → hidden_dim
+        self.input_proj = torch.nn.Linear(
+            int(flat_dim), hidden_dim, dtype=dde_config.real(torch)
+        )
+        torch.nn.init.kaiming_normal_(
+            self.input_proj.weight, mode="fan_in", nonlinearity="tanh"
+        )
+        torch.nn.init.zeros_(self.input_proj.bias)
+
+        self.blocks = torch.nn.ModuleList(
+            [ResNetBlock(hidden_dim) for _ in range(num_blocks)]
+        )
+
+        # Output projection: hidden_dim → latent_width
+        self.output_proj = torch.nn.Linear(
+            hidden_dim, int(latent_width), dtype=dde_config.real(torch)
+        )
+        torch.nn.init.xavier_uniform_(self.output_proj.weight)
+        torch.nn.init.zeros_(self.output_proj.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = torch.tanh(self.input_proj(x))
+        for block in self.blocks:
+            h = block(h)
+        return self.output_proj(h)
+
+
 class TemporalTransformerBranch(torch.nn.Module):
     """What: 將 branch 的時間窗視為 token 序列，使用 Transformer encoder 抽取時序表徵。"""
 
