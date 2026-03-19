@@ -1739,6 +1739,9 @@ def main() -> None:
                 "trainable_parameters": count_trainable_parameters(net),
                 "use_gated_mlp": args.use_gated_mlp,
                 "use_transformer_branch": args.use_transformer_branch,
+                "use_resnet_branch": args.use_resnet_branch,
+                "trunk_rff_features": args.trunk_rff_features,
+                "trunk_rff_sigma": args.trunk_rff_sigma,
             },
             "runtime": {
                 "training_wall_time_seconds": float(train_end_time - train_start_time),
