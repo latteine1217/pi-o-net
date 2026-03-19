@@ -1,6 +1,6 @@
 [train]
 data_file = ["../data/kolmogorov_dns/kolmogorov_dns_10000.npy"]
-field = "omega"
+field = "uvp"
 num_sensors = 50
 horizon_steps = 10
 temporal_stride = 1
@@ -8,7 +8,7 @@ burn_in_steps = 100
 train_ratio = 0.8
 val_ratio = 0.1
 physics_stride = 32
-ic_loss_weight = 20.0
+data_loss_weight = 20.0
 physics_loss_weight = 1.0
 physics_time_samples = 4
 physics_branch_batch_size = 4

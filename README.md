@@ -41,6 +41,7 @@ uv run train-kolmogorov-deeponet --config configs/paper_aligned_step.toml
 uv run train-kolmogorov-deeponet --config configs/paper_aligned_constant.toml
 uv run train-kolmogorov-deeponet --config configs/paper_aligned_step.toml
 uv run train-kolmogorov-deeponet --config configs/paper_aligned_cosine.toml
+uv run train-kolmogorov-deeponet --config configs/local_fast.toml
 ```
 
 三份 config 僅差在學習率調度：
@@ -65,6 +66,12 @@ uv run eval-kolmogorov-checkpoint \
 - `artifacts/*/best_checkpoint_evaluation.json`
 - `artifacts/*/mid_eval_history.json`
 - `artifacts/*/best_checkpoint.pt`
+
+上述 `evaluation_summary.json` / `best_checkpoint_evaluation.json` / `mid_eval_history.json` 皆包含 `pass_fail` 欄位，規則為：
+- `validation_mean_relative_l2 < 0.2`
+- `test_mean_relative_l2 < 0.2`（僅 full evaluation）
+- `rollout.sensor_relative_l2_mean < 0.3`
+- `rollout.physics_relative_l2_mean < 0.4`
 
 ## 目前模型結構（預設）
 

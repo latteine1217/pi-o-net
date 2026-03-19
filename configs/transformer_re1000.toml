@@ -1,0 +1,47 @@
+[train]
+data_file = ["../data/kolmogorov_dns/kolmogorov_dns_1000.npy"]
+field = "uvp"
+num_sensors = 50
+history_steps = 8
+horizon_steps = 10
+temporal_stride = 1
+burn_in_steps = 100
+train_ratio = 0.8
+val_ratio = 0.1
+
+physics_stride = 64
+data_loss_weight = 10.0
+physics_loss_weight = 1.0
+physics_time_samples = 2
+physics_branch_batch_size = 4
+physics_continuity_weight = 10.0
+physics_causal_epsilon = 0.0
+time_fourier_modes = 8
+
+iterations = 5000
+batch_size = 16
+optimizer = "adamw"
+learning_rate = 0.001
+weight_decay = 0.0001
+lr_schedule = "step"
+min_learning_rate = 1e-6
+lr_step_size = 2500
+lr_step_gamma = 0.5
+rollout_steps = 10
+checkpoint_period = 1000
+
+branch_hidden_dims = [256, 256]
+trunk_hidden_dims = [256, 256]
+latent_width = 128
+use_gated_mlp = true
+use_transformer_branch = true
+transformer_model_dim = 128
+transformer_num_heads = 4
+transformer_num_layers = 2
+transformer_ff_dim = 256
+transformer_dropout = 0.0
+
+early_stop_total_loss = 1e-4
+seed = 42
+device = "auto"
+artifacts_dir = "../artifacts/transformer-re1000"

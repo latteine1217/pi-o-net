@@ -2,7 +2,7 @@
 
 What:
     從 Kolmogorov DNS 時間序列中抽取固定隨機 sensors，建立 DeepONet 的觀測資料，
-    並同時準備在規則 collocation grid 上計算 vorticity equation residual 所需的物理量。
+    並同時準備在規則 collocation grid 上計算 Navier-Stokes + continuity residual 所需的物理量。
 Why:
     使用者要的是「DNS + sparse sensors + physics loss」，不是全場監督。
     這個模組把觀測 loss 與 physics loss 所需資料一起整理，讓訓練端能維持單一入口。
@@ -34,8 +34,9 @@ class DatasetConfig:
         必須把這些設計假設集中管理，才能清楚知道模型學的是哪一個 operator。
     """
 
-    field: str = "omega"
+    field: str = "uvp"
     num_sensors: int = 1000
+    history_steps: int = 1
     horizon_steps: int = 1
     temporal_stride: int = 1
     burn_in_steps: int = 0
@@ -57,7 +58,8 @@ class LoadedDnsTrajectory:
     sensor_values: Array
     physics_coords: Array
     physics_values: Array
-    forcing: Array
+    forcing_u: Array
+    forcing_v: Array
     physics_grid_shape: tuple[int, int]
     domain_length: float
 
@@ -81,9 +83,12 @@ class PreparedDataset:
     train_nu: Array
     val_nu: Array
     test_nu: Array
-    train_forcing: Array
-    val_forcing: Array
-    test_forcing: Array
+    train_forcing_u: Array
+    val_forcing_u: Array
+    test_forcing_u: Array
+    train_forcing_v: Array
+    val_forcing_v: Array
+    test_forcing_v: Array
     physics_coords: Array
     physics_grid_shape: tuple[int, int]
     physics_domain_length: float
@@ -93,10 +98,11 @@ class PreparedDataset:
     branch_std: float
     reynolds_mean: float
     reynolds_std: float
-    target_mean: float
-    target_std: float
+    target_means: Array   # shape (3,): u / v / p 各自的 mean
+    target_stds: Array    # shape (3,): u / v / p 各自的 std
     rollout_cases: list[dict[str, object]]
     metadata: dict[str, object]
+    history_steps: int
     horizon_steps: int
     seed: int
 
@@ -105,7 +111,8 @@ def resolve_data_files(explicit_files: list[str] | None) -> list[Path]:
     """What: 解析要使用的 DNS 檔案清單。
 
     Why:
-        physics loss 寫死在 Kolmogorov vorticity equation，上游資料就應明確限定為 DNS。
+        physics loss 會直接用 DNS 的 `u,v,p` 計算 NS + continuity，
+        上游資料就應明確限定為 DNS。
     """
 
     if explicit_files:
@@ -132,7 +139,9 @@ def _extract_reynolds(payload: dict, source_file: Path) -> float:
 def _validate_dns_payload(payload: dict, source_file: Path, field: str) -> None:
     """What: 驗證 DNS 檔案是否包含 physics loss 需要的欄位。"""
 
-    required = {"x", "y", "time", "config", field}
+    if field != "uvp":
+        raise ValueError("目前僅支援 `field=uvp`（直接輸出 u,v,p）。")
+    required = {"x", "y", "time", "config", "u", "v", "p"}
     missing = required.difference(payload)
     if missing:
         raise KeyError(f"{source_file} 缺少 DNS 欄位: {sorted(missing)}")
@@ -143,6 +152,20 @@ def _build_full_coords(x: Array, y: Array) -> Array:
 
     xx, yy = np.meshgrid(x, y, indexing="ij")
     return np.stack([xx, yy], axis=-1)
+
+
+def _build_component_trunk_coords(coords_xy: Array, time_value: float, num_components: int = 3) -> Array:
+    """What: 將 `(x,y,t)` 擴成 component-aware trunk `(x,y,t,c)`。"""
+
+    xy = np.asarray(coords_xy, dtype=np.float32)
+    n_points = xy.shape[0]
+    t_col = np.full((n_points, 1), np.float32(time_value), dtype=np.float32)
+    base = np.concatenate([xy, t_col], axis=1)
+    chunks: list[Array] = []
+    for comp in range(num_components):
+        comp_col = np.full((n_points, 1), np.float32(comp), dtype=np.float32)
+        chunks.append(np.concatenate([base, comp_col], axis=1))
+    return np.concatenate(chunks, axis=0).astype(np.float32)
 
 
 def _sample_sensor_indices(num_points: int, num_sensors: int, seed: int) -> Array:
@@ -159,13 +182,15 @@ def _sample_sensor_indices(num_points: int, num_sensors: int, seed: int) -> Arra
     return np.sort(rng.choice(num_points, size=num_sensors, replace=False)).astype(np.int64)
 
 
-def _forcing_vorticity(config: dict, physics_coords_grid: Array) -> Array:
-    """What: 依 DNS 設定建立 Kolmogorov forcing 的渦度形式。"""
+def _forcing_velocity(config: dict, physics_coords_grid: Array) -> tuple[Array, Array]:
+    """What: 建立 Navier-Stokes 動量方程用的體積力 `(f_x, f_y)`。"""
 
     amplitude = float(config.get("A", 0.1))
     forcing_wavenumber = float(config.get("k_f", 4.0))
     y = physics_coords_grid[..., 1]
-    return (-amplitude * forcing_wavenumber * np.cos(forcing_wavenumber * y)).astype(np.float32)
+    forcing_u = (amplitude * np.sin(forcing_wavenumber * y)).astype(np.float32)
+    forcing_v = np.zeros_like(forcing_u, dtype=np.float32)
+    return forcing_u, forcing_v
 
 
 def load_dns_trajectory(
@@ -183,12 +208,16 @@ def load_dns_trajectory(
     x = np.asarray(payload["x"], dtype=np.float32)
     y = np.asarray(payload["y"], dtype=np.float32)
     time = np.asarray(payload["time"], dtype=np.float32)
-    field = np.asarray(payload[config.field], dtype=np.float32)
+    u_field = np.asarray(payload["u"], dtype=np.float32)
+    v_field = np.asarray(payload["v"], dtype=np.float32)
+    p_field = np.asarray(payload["p"], dtype=np.float32)
     dns_config = dict(payload["config"])
 
     full_coords = _build_full_coords(x, y)
     flat_coords = full_coords.reshape(-1, 2)
-    flat_field = field.reshape(field.shape[0], -1)
+    flat_u = u_field.reshape(u_field.shape[0], -1)
+    flat_v = v_field.reshape(v_field.shape[0], -1)
+    flat_p = p_field.reshape(p_field.shape[0], -1)
 
     if sensor_indices is None:
         sensor_indices = _sample_sensor_indices(
@@ -197,12 +226,17 @@ def load_dns_trajectory(
             seed=config.seed,
         )
     sensor_coords = flat_coords[sensor_indices]
-    sensor_values = flat_field[:, sensor_indices]
+    sensor_u = flat_u[:, sensor_indices]
+    sensor_v = flat_v[:, sensor_indices]
+    sensor_p = flat_p[:, sensor_indices]
+    sensor_values = np.concatenate([sensor_u, sensor_v, sensor_p], axis=1)
 
     physics_stride = max(1, int(config.physics_stride))
-    physics_field = field[:, ::physics_stride, ::physics_stride]
+    physics_u = u_field[:, ::physics_stride, ::physics_stride]
+    physics_v = v_field[:, ::physics_stride, ::physics_stride]
+    physics_p = p_field[:, ::physics_stride, ::physics_stride]
     physics_coords_grid = full_coords[::physics_stride, ::physics_stride]
-    forcing = _forcing_vorticity(dns_config, physics_coords_grid)
+    forcing_u, forcing_v = _forcing_velocity(dns_config, physics_coords_grid)
 
     dt = time[1:] - time[:-1]
     if np.any(dt <= 0.0):
@@ -216,9 +250,17 @@ def load_dns_trajectory(
         sensor_coords=sensor_coords.astype(np.float32),
         sensor_values=sensor_values.astype(np.float32),
         physics_coords=physics_coords_grid.reshape(-1, 2).astype(np.float32),
-        physics_values=physics_field.reshape(physics_field.shape[0], -1).astype(np.float32),
-        forcing=forcing.reshape(-1).astype(np.float32),
-        physics_grid_shape=(physics_field.shape[1], physics_field.shape[2]),
+        physics_values=np.concatenate(
+            [
+                physics_u.reshape(physics_u.shape[0], -1),
+                physics_v.reshape(physics_v.shape[0], -1),
+                physics_p.reshape(physics_p.shape[0], -1),
+            ],
+            axis=1,
+        ).astype(np.float32),
+        forcing_u=forcing_u.reshape(-1).astype(np.float32),
+        forcing_v=forcing_v.reshape(-1).astype(np.float32),
+        physics_grid_shape=(physics_u.shape[1], physics_u.shape[2]),
         domain_length=float(dns_config.get("L", float(x[-1] - x[0] + (x[1] - x[0])))),
     )
     return trajectory, sensor_indices
@@ -230,12 +272,15 @@ def _split_indices(
     val_ratio: float,
     temporal_stride: int,
     burn_in_steps: int,
+    history_steps: int,
 ) -> tuple[Array, Array, Array]:
     """What: 建立 train/val/test 的時間索引。"""
 
     if burn_in_steps < 0:
         raise ValueError("burn_in_steps 不可為負數。")
-    start_index = min(int(burn_in_steps), num_pairs)
+    if history_steps <= 0:
+        raise ValueError("history_steps 必須大於 0。")
+    start_index = min(max(int(burn_in_steps), int(history_steps) - 1), num_pairs)
     indices = np.arange(start_index, num_pairs, max(1, int(temporal_stride)), dtype=np.int64)
     if len(indices) < 3:
         raise ValueError("時間樣本不足，無法同時切出 train/val/test 資料。")
@@ -253,23 +298,38 @@ def _build_sample_arrays(
     trajectory: LoadedDnsTrajectory,
     pair_indices: Array,
     target_offset: int,
-) -> tuple[Array, Array, Array, Array, Array, Array]:
+    history_steps: int,
+) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
     """What: 將時間配對轉成觀測資料與 physics loss 所需陣列。"""
 
-    branch = np.zeros((len(pair_indices), trajectory.sensor_values.shape[1] + 1), dtype=np.float32)
+    token_dim = trajectory.sensor_values.shape[1] + 1
+    branch = np.zeros((len(pair_indices), history_steps, token_dim), dtype=np.float32)
     target = np.zeros((len(pair_indices), trajectory.sensor_values.shape[1]), dtype=np.float32)
     current_physics = np.zeros((len(pair_indices), trajectory.physics_values.shape[1]), dtype=np.float32)
     dt = np.zeros((len(pair_indices), 1), dtype=np.float32)
     nu = np.full((len(pair_indices), 1), trajectory.nu, dtype=np.float32)
 
     for row, start in enumerate(pair_indices):
-        branch[row, :-1] = trajectory.sensor_values[start]
-        branch[row, -1] = np.float32(trajectory.reynolds)
+        history_start = start - history_steps + 1
+        history_end = start + 1
+        if history_start < 0:
+            raise ValueError("history_steps 超過可用歷史長度，請提高 burn_in_steps 或降低 history_steps。")
+        branch[row, :, :-1] = trajectory.sensor_values[history_start:history_end]
+        branch[row, :, -1] = np.float32(trajectory.reynolds)
         target[row] = trajectory.sensor_values[start + target_offset]
         current_physics[row] = trajectory.physics_values[start]
         dt[row, 0] = trajectory.dt[start]
-    forcing = np.repeat(trajectory.forcing[None, :], len(pair_indices), axis=0)
-    return branch, target, current_physics, dt, nu, forcing.astype(np.float32)
+    forcing_u = np.repeat(trajectory.forcing_u[None, :], len(pair_indices), axis=0)
+    forcing_v = np.repeat(trajectory.forcing_v[None, :], len(pair_indices), axis=0)
+    return (
+        branch,
+        target,
+        current_physics,
+        dt,
+        nu,
+        forcing_u.astype(np.float32),
+        forcing_v.astype(np.float32),
+    )
 
 
 def _normalize_dataset(
@@ -279,15 +339,29 @@ def _normalize_dataset(
     train_target: Array,
     val_target: Array,
     test_target: Array,
-) -> tuple[Array, Array, Array, Array, Array, Array, dict[str, float]]:
-    """What: 用訓練集統計量正規化觀測資料。"""
+) -> tuple[Array, Array, Array, Array, Array, Array, dict[str, object]]:
+    """What: 用訓練集統計量正規化觀測資料。
 
-    branch_mean = float(np.mean(train_branch[:, :-1]))
-    branch_std = float(np.std(train_branch[:, :-1]) + 1e-6)
-    target_mean = float(np.mean(train_target))
-    target_std = float(np.std(train_target) + 1e-6)
-    reynolds_mean = float(np.mean(train_branch[:, -1]))
-    reynolds_std = float(np.std(train_branch[:, -1]) + 1e-6)
+    Why:
+        target 改為 per-component 正規化（u/v/p 各自獨立）。
+        NS 流場中各分量的量級可能不同（例如壓力量級不同於速度），
+        共用同一組 mean/std 會扭曲 loss landscape 並導致 physics residual 計算失真。
+    """
+
+    branch_mean = float(np.mean(train_branch[:, :, :-1]))
+    branch_std = float(np.std(train_branch[:, :, :-1]) + 1e-6)
+    reynolds_mean = float(np.mean(train_branch[:, :, -1]))
+    reynolds_std = float(np.std(train_branch[:, :, -1]) + 1e-6)
+
+    n_pts = train_target.shape[1] // 3  # 每個分量的 sensor 數
+    target_means = np.array(
+        [float(np.mean(train_target[:, c * n_pts : (c + 1) * n_pts])) for c in range(3)],
+        dtype=np.float64,
+    )
+    target_stds = np.array(
+        [float(np.std(train_target[:, c * n_pts : (c + 1) * n_pts]) + 1e-6) for c in range(3)],
+        dtype=np.float64,
+    )
 
     train_branch = train_branch.copy()
     val_branch = val_branch.copy()
@@ -296,21 +370,24 @@ def _normalize_dataset(
     val_target = val_target.copy()
     test_target = test_target.copy()
 
-    train_branch[:, :-1] = (train_branch[:, :-1] - branch_mean) / branch_std
-    val_branch[:, :-1] = (val_branch[:, :-1] - branch_mean) / branch_std
-    test_branch[:, :-1] = (test_branch[:, :-1] - branch_mean) / branch_std
-    train_branch[:, -1] = (train_branch[:, -1] - reynolds_mean) / reynolds_std
-    val_branch[:, -1] = (val_branch[:, -1] - reynolds_mean) / reynolds_std
-    test_branch[:, -1] = (test_branch[:, -1] - reynolds_mean) / reynolds_std
-    train_target = (train_target - target_mean) / target_std
-    val_target = (val_target - target_mean) / target_std
-    test_target = (test_target - target_mean) / target_std
+    train_branch[:, :, :-1] = (train_branch[:, :, :-1] - branch_mean) / branch_std
+    val_branch[:, :, :-1] = (val_branch[:, :, :-1] - branch_mean) / branch_std
+    test_branch[:, :, :-1] = (test_branch[:, :, :-1] - branch_mean) / branch_std
+    train_branch[:, :, -1] = (train_branch[:, :, -1] - reynolds_mean) / reynolds_std
+    val_branch[:, :, -1] = (val_branch[:, :, -1] - reynolds_mean) / reynolds_std
+    test_branch[:, :, -1] = (test_branch[:, :, -1] - reynolds_mean) / reynolds_std
 
-    stats = {
+    for c, (m, s) in enumerate(zip(target_means, target_stds)):
+        sl = slice(c * n_pts, (c + 1) * n_pts)
+        train_target[:, sl] = (train_target[:, sl] - m) / s
+        val_target[:, sl] = (val_target[:, sl] - m) / s
+        test_target[:, sl] = (test_target[:, sl] - m) / s
+
+    stats: dict[str, object] = {
         "branch_mean": branch_mean,
         "branch_std": branch_std,
-        "target_mean": target_mean,
-        "target_std": target_std,
+        "target_means": target_means,
+        "target_stds": target_stds,
         "reynolds_mean": reynolds_mean,
         "reynolds_std": reynolds_std,
     }
@@ -325,21 +402,24 @@ def build_dataset(data_files: list[Path], config: DatasetConfig) -> PreparedData
     train_current_parts: list[Array] = []
     train_dt_parts: list[Array] = []
     train_nu_parts: list[Array] = []
-    train_forcing_parts: list[Array] = []
+    train_forcing_u_parts: list[Array] = []
+    train_forcing_v_parts: list[Array] = []
 
     val_branch_parts: list[Array] = []
     val_target_parts: list[Array] = []
     val_current_parts: list[Array] = []
     val_dt_parts: list[Array] = []
     val_nu_parts: list[Array] = []
-    val_forcing_parts: list[Array] = []
+    val_forcing_u_parts: list[Array] = []
+    val_forcing_v_parts: list[Array] = []
 
     test_branch_parts: list[Array] = []
     test_target_parts: list[Array] = []
     test_current_parts: list[Array] = []
     test_dt_parts: list[Array] = []
     test_nu_parts: list[Array] = []
-    test_forcing_parts: list[Array] = []
+    test_forcing_u_parts: list[Array] = []
+    test_forcing_v_parts: list[Array] = []
 
     sensor_indices: Array | None = None
     sensor_coords: Array | None = None
@@ -383,16 +463,41 @@ def build_dataset(data_files: list[Path], config: DatasetConfig) -> PreparedData
             config.val_ratio,
             config.temporal_stride,
             config.burn_in_steps,
+            config.history_steps,
         )
 
-        train_branch, train_target, train_current, train_dt, train_nu, train_forcing = _build_sample_arrays(
-            trajectory, train_indices, target_offset=0
+        (
+            train_branch,
+            train_target,
+            train_current,
+            train_dt,
+            train_nu,
+            train_forcing_u,
+            train_forcing_v,
+        ) = _build_sample_arrays(
+            trajectory, train_indices, target_offset=0, history_steps=config.history_steps
         )
-        val_branch, val_target, val_current, val_dt, val_nu, val_forcing = _build_sample_arrays(
-            trajectory, val_indices, target_offset=config.horizon_steps
+        (
+            val_branch,
+            val_target,
+            val_current,
+            val_dt,
+            val_nu,
+            val_forcing_u,
+            val_forcing_v,
+        ) = _build_sample_arrays(
+            trajectory, val_indices, target_offset=config.horizon_steps, history_steps=config.history_steps
         )
-        test_branch, test_target, test_current, test_dt, test_nu, test_forcing = _build_sample_arrays(
-            trajectory, test_indices, target_offset=config.horizon_steps
+        (
+            test_branch,
+            test_target,
+            test_current,
+            test_dt,
+            test_nu,
+            test_forcing_u,
+            test_forcing_v,
+        ) = _build_sample_arrays(
+            trajectory, test_indices, target_offset=config.horizon_steps, history_steps=config.history_steps
         )
 
         train_branch_parts.append(train_branch)
@@ -400,21 +505,24 @@ def build_dataset(data_files: list[Path], config: DatasetConfig) -> PreparedData
         train_current_parts.append(train_current)
         train_dt_parts.append(train_dt)
         train_nu_parts.append(train_nu)
-        train_forcing_parts.append(train_forcing)
+        train_forcing_u_parts.append(train_forcing_u)
+        train_forcing_v_parts.append(train_forcing_v)
 
         val_branch_parts.append(val_branch)
         val_target_parts.append(val_target)
         val_current_parts.append(val_current)
         val_dt_parts.append(val_dt)
         val_nu_parts.append(val_nu)
-        val_forcing_parts.append(val_forcing)
+        val_forcing_u_parts.append(val_forcing_u)
+        val_forcing_v_parts.append(val_forcing_v)
 
         test_branch_parts.append(test_branch)
         test_target_parts.append(test_target)
         test_current_parts.append(test_current)
         test_dt_parts.append(test_dt)
         test_nu_parts.append(test_nu)
-        test_forcing_parts.append(test_forcing)
+        test_forcing_u_parts.append(test_forcing_u)
+        test_forcing_v_parts.append(test_forcing_v)
 
         per_file_metadata.append(
             {
@@ -431,7 +539,9 @@ def build_dataset(data_files: list[Path], config: DatasetConfig) -> PreparedData
             {
                 "source_file": trajectory.source_file,
                 "reynolds": float(trajectory.reynolds),
-                "initial_sensor": trajectory.sensor_values[first_test_index].astype(np.float32),
+                "initial_history": trajectory.sensor_values[
+                    first_test_index - config.history_steps + 1 : first_test_index + 1
+                ].astype(np.float32),
                 "future_sensor": trajectory.sensor_values[
                     first_test_index + 1 : first_test_index + config.horizon_steps + 1
                 ].astype(np.float32),
@@ -463,22 +573,21 @@ def build_dataset(data_files: list[Path], config: DatasetConfig) -> PreparedData
     train_nu = np.concatenate(train_nu_parts, axis=0)
     val_nu = np.concatenate(val_nu_parts, axis=0)
     test_nu = np.concatenate(test_nu_parts, axis=0)
-    train_forcing = np.concatenate(train_forcing_parts, axis=0)
-    val_forcing = np.concatenate(val_forcing_parts, axis=0)
-    test_forcing = np.concatenate(test_forcing_parts, axis=0)
+    train_forcing_u = np.concatenate(train_forcing_u_parts, axis=0)
+    val_forcing_u = np.concatenate(val_forcing_u_parts, axis=0)
+    test_forcing_u = np.concatenate(test_forcing_u_parts, axis=0)
+    train_forcing_v = np.concatenate(train_forcing_v_parts, axis=0)
+    val_forcing_v = np.concatenate(val_forcing_v_parts, axis=0)
+    test_forcing_v = np.concatenate(test_forcing_v_parts, axis=0)
 
     train_branch, val_branch, test_branch, train_target, val_target, test_target, stats = _normalize_dataset(
         train_branch, val_branch, test_branch, train_target, val_target, test_target
     )
 
     supervised_eval_time = float(dt_reference * config.horizon_steps)
-    sensor_coords_t0 = np.concatenate(
-        [sensor_coords.astype(np.float32), np.zeros((len(sensor_coords), 1), dtype=np.float32)],
-        axis=1,
-    )
-    sensor_coords_teval = np.concatenate(
-        [sensor_coords.astype(np.float32), np.full((len(sensor_coords), 1), supervised_eval_time, dtype=np.float32)],
-        axis=1,
+    sensor_coords_t0 = _build_component_trunk_coords(sensor_coords, time_value=0.0, num_components=3)
+    sensor_coords_teval = _build_component_trunk_coords(
+        sensor_coords, time_value=supervised_eval_time, num_components=3
     )
 
     metadata = {
@@ -488,10 +597,12 @@ def build_dataset(data_files: list[Path], config: DatasetConfig) -> PreparedData
         "train_samples": int(train_branch.shape[0]),
         "val_samples": int(val_branch.shape[0]),
         "test_samples": int(test_branch.shape[0]),
-        "branch_dim": int(train_branch.shape[1]),
-        "trunk_points": int(sensor_coords.shape[0]),
+        "branch_dim": int(train_branch.shape[-1]),
+        "branch_shape": np.asarray(train_branch.shape[1:], dtype=np.int64),
+        "trunk_points": int(sensor_coords_t0.shape[0]),
         "target_dim": int(train_target.shape[1]),
         "physics_points": int(physics_coords.shape[0]),
+        "physics_components": 3,
         "physics_grid_shape": np.asarray(physics_grid_shape, dtype=np.int64),
         "sensor_indices": sensor_indices,
         "sensor_coords": sensor_coords,
@@ -517,9 +628,12 @@ def build_dataset(data_files: list[Path], config: DatasetConfig) -> PreparedData
         train_nu=train_nu.astype(np.float32),
         val_nu=val_nu.astype(np.float32),
         test_nu=test_nu.astype(np.float32),
-        train_forcing=train_forcing.astype(np.float32),
-        val_forcing=val_forcing.astype(np.float32),
-        test_forcing=test_forcing.astype(np.float32),
+        train_forcing_u=train_forcing_u.astype(np.float32),
+        val_forcing_u=val_forcing_u.astype(np.float32),
+        test_forcing_u=test_forcing_u.astype(np.float32),
+        train_forcing_v=train_forcing_v.astype(np.float32),
+        val_forcing_v=val_forcing_v.astype(np.float32),
+        test_forcing_v=test_forcing_v.astype(np.float32),
         physics_coords=physics_coords.astype(np.float32),
         physics_grid_shape=physics_grid_shape,
         physics_domain_length=float(domain_length),
@@ -529,17 +643,18 @@ def build_dataset(data_files: list[Path], config: DatasetConfig) -> PreparedData
         branch_std=stats["branch_std"],
         reynolds_mean=stats["reynolds_mean"],
         reynolds_std=stats["reynolds_std"],
-        target_mean=stats["target_mean"],
-        target_std=stats["target_std"],
+        target_means=np.asarray(stats["target_means"], dtype=np.float64),
+        target_stds=np.asarray(stats["target_stds"], dtype=np.float64),
         rollout_cases=rollout_cases,
         metadata=metadata,
+        history_steps=int(config.history_steps),
         horizon_steps=int(config.horizon_steps),
         seed=int(config.seed),
     )
 
 
 class PhysicsInformedTripleCartesianProd(Data):
-    """What: 結合 sparse supervised loss 與 vorticity residual 的 DeepONet 資料類。
+    """What: 結合 sparse supervised loss 與 NS+continuity residual 的 DeepONet 資料類。
 
     Why:
         `DeepXDE` 已經負責 optimizer、checkpoint 與 metrics；
@@ -551,6 +666,9 @@ class PhysicsInformedTripleCartesianProd(Data):
         dataset: PreparedDataset,
         physics_time_samples: int = 4,
         physics_branch_batch_size: int | None = None,
+        disable_physics_loss: bool = False,
+        physics_continuity_weight: float = 10.0,
+        physics_causal_epsilon: float = 1.0,
     ):
         self.train_x = dataset.train_x
         self.train_y = dataset.train_y
@@ -562,18 +680,27 @@ class PhysicsInformedTripleCartesianProd(Data):
         self.test_dt = dataset.val_dt
         self.train_nu = dataset.train_nu
         self.test_nu = dataset.val_nu
-        self.train_forcing = dataset.train_forcing
-        self.test_forcing = dataset.val_forcing
+        self.train_forcing_u = dataset.train_forcing_u
+        self.test_forcing_u = dataset.val_forcing_u
+        self.train_forcing_v = dataset.train_forcing_v
+        self.test_forcing_v = dataset.val_forcing_v
         self.physics_coords = dataset.physics_coords
         self.physics_grid_shape = dataset.physics_grid_shape
         self.physics_domain_length = dataset.physics_domain_length
-        self.target_mean = float(dataset.target_mean)
-        self.target_std = float(dataset.target_std)
+        self.target_means = np.asarray(dataset.target_means, dtype=np.float64)  # (3,): u/v/p
+        self.target_stds = np.asarray(dataset.target_stds, dtype=np.float64)   # (3,): u/v/p
         self.horizon_steps = int(dataset.horizon_steps)
         self.seed = int(dataset.seed)
         self.physics_time_samples = int(physics_time_samples)
+        self.disable_physics_loss = bool(disable_physics_loss)
+        self.physics_continuity_weight = float(physics_continuity_weight)
+        self.physics_causal_epsilon = float(physics_causal_epsilon)
         if self.physics_time_samples <= 0:
             raise ValueError("physics_time_samples 必須大於 0。")
+        if self.physics_continuity_weight <= 0.0:
+            raise ValueError("physics_continuity_weight 必須大於 0。")
+        if self.physics_causal_epsilon < 0.0:
+            raise ValueError("physics_causal_epsilon 不可小於 0。")
         if physics_branch_batch_size is not None and int(physics_branch_batch_size) <= 0:
             raise ValueError("physics_branch_batch_size 必須大於 0。")
         self.physics_branch_batch_size = (
@@ -589,40 +716,7 @@ class PhysicsInformedTripleCartesianProd(Data):
         self._last_train_indices = np.arange(len(self.train_x[0]), dtype=np.int64)
         self._physics_rng = np.random.default_rng(self.seed)
 
-        self._spectral_kx: torch.Tensor | None = None
-        self._spectral_ky: torch.Tensor | None = None
-        self._spectral_k2: torch.Tensor | None = None
-        self._spectral_nonzero_mask: torch.Tensor | None = None
-        self._spectral_kx_complex: torch.Tensor | None = None
-        self._spectral_ky_complex: torch.Tensor | None = None
-        self._spectral_k2_complex: torch.Tensor | None = None
         self._tensor_cache: dict[tuple[str, str], dict[str, torch.Tensor]] = {}
-
-    def _ensure_spectral_cache(self, device: torch.device, dtype: torch.dtype) -> None:
-        """What: 在指定 device 上建立頻域常數。"""
-
-        if self._spectral_kx is not None and self._spectral_kx.device == device and self._spectral_kx.dtype == dtype:
-            return
-
-        grid_x, grid_y = self.physics_grid_shape
-        if grid_x != grid_y:
-            raise ValueError("physics grid 必須是正方形，才能使用目前的 spectral residual。")
-        dx = self.physics_domain_length / grid_x
-        freq = 2.0 * np.pi * np.fft.fftfreq(grid_x, d=dx)
-        kx, ky = np.meshgrid(freq, freq, indexing="ij")
-        k2 = kx**2 + ky**2
-        nonzero = k2 > 0.0
-
-        self._spectral_kx = torch.as_tensor(kx, dtype=dtype, device=device)
-        self._spectral_ky = torch.as_tensor(ky, dtype=dtype, device=device)
-        self._spectral_k2 = torch.as_tensor(k2, dtype=dtype, device=device)
-        self._spectral_nonzero_mask = torch.as_tensor(nonzero, dtype=torch.bool, device=device)
-        complex_dtype = (
-            torch.complex64 if dtype in (torch.float16, torch.float32, torch.bfloat16) else torch.complex128
-        )
-        self._spectral_kx_complex = self._spectral_kx.to(complex_dtype)
-        self._spectral_ky_complex = self._spectral_ky.to(complex_dtype)
-        self._spectral_k2_complex = self._spectral_k2.to(complex_dtype)
 
     def _ensure_tensor_cache(self, device: torch.device, dtype: torch.dtype) -> dict[str, torch.Tensor]:
         """What: 快取 physics loss 需要的靜態 tensor，避免每步重複轉換。"""
@@ -639,11 +733,17 @@ class PhysicsInformedTripleCartesianProd(Data):
             "test_dt": torch.as_tensor(self.test_dt.reshape(-1), dtype=dtype, device=device),
             "train_nu": torch.as_tensor(self.train_nu.reshape(-1), dtype=dtype, device=device),
             "test_nu": torch.as_tensor(self.test_nu.reshape(-1), dtype=dtype, device=device),
-            "train_forcing": torch.as_tensor(
-                self.train_forcing.reshape(-1, grid_size, grid_size), dtype=dtype, device=device
+            "train_forcing_u": torch.as_tensor(
+                self.train_forcing_u.reshape(-1, grid_size, grid_size), dtype=dtype, device=device
             ),
-            "test_forcing": torch.as_tensor(
-                self.test_forcing.reshape(-1, grid_size, grid_size), dtype=dtype, device=device
+            "test_forcing_u": torch.as_tensor(
+                self.test_forcing_u.reshape(-1, grid_size, grid_size), dtype=dtype, device=device
+            ),
+            "train_forcing_v": torch.as_tensor(
+                self.train_forcing_v.reshape(-1, grid_size, grid_size), dtype=dtype, device=device
+            ),
+            "test_forcing_v": torch.as_tensor(
+                self.test_forcing_v.reshape(-1, grid_size, grid_size), dtype=dtype, device=device
             ),
         }
         self._tensor_cache[key] = cached
@@ -656,69 +756,122 @@ class PhysicsInformedTripleCartesianProd(Data):
         physics_coords_xy: torch.Tensor,
         delta_t_tensor: torch.Tensor,
         nu_tensor: torch.Tensor,
-        forcing_tensor: torch.Tensor,
-    ) -> torch.Tensor:
-        """What: 用連續時間 trunk + AD 時間導數計算 Kolmogorov PDE residual。"""
+        forcing_u_tensor: torch.Tensor,
+        forcing_v_tensor: torch.Tensor,
+        return_components: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, float]]:
+        """What: 計算 NS x/y 動量方程 + continuity 三項 residual MSE 並疊加。
 
-        device = branch_inputs.device
+        Why:
+            DeepONet 的 Cartesian product 結構保證 pred[i] 僅依賴 trunk[i]，
+            因此可將 T 個時間點 × 3 個分量打包成一個 trunk tensor，做單次 forward pass。
+            舊做法每個 (sample, time) 做 3 次 forward + 6 次 backward；
+            新做法每個 sample 做 1 次 forward + 5 次 backward，T 個時間點平行處理。
+            Causal weighting 改用向量化 cumsum，消除 Python 內層 for-loop。
+        """
+
         dtype = branch_inputs.dtype
-        self._ensure_spectral_cache(device, dtype)
-
-        grid_size = self.physics_grid_shape[0]
+        device = branch_inputs.device
         num_samples = int(branch_inputs.shape[0])
+        n_pts = int(physics_coords_xy.shape[0])
+        T = self.physics_time_samples
+
+        # 取樣時間矩陣 (B, T)，排序以符合 causal weighting 的時序要求
         t_max = delta_t_tensor * float(self.horizon_steps)
-        if self.physics_time_samples == 1:
+        if T == 1:
             times_matrix = t_max.unsqueeze(1)
         else:
-            times_matrix = torch.rand((num_samples, self.physics_time_samples), dtype=dtype, device=device)
-            times_matrix = times_matrix * t_max.unsqueeze(1)
+            times_matrix = torch.rand((num_samples, T), dtype=dtype, device=device) * t_max.unsqueeze(1)
+        times_matrix = torch.sort(times_matrix, dim=1)[0]
 
-        loss_sum = torch.zeros((), dtype=dtype, device=device)
-        loss_count = 0
+        # 預先建立 per-component 統計量 tensor，避免在迴圈中重複建立
+        comp_vals = torch.tensor([0.0, 1.0, 2.0], dtype=dtype, device=device)
+        t_means = torch.as_tensor(self.target_means, dtype=dtype, device=device).reshape(1, 3, 1)
+        t_stds = torch.as_tensor(self.target_stds, dtype=dtype, device=device).reshape(1, 3, 1)
+
+        total_loss_x = branch_inputs.new_zeros(())
+        total_loss_y = branch_inputs.new_zeros(())
+        total_loss_c = branch_inputs.new_zeros(())
+
         for batch_idx in range(num_samples):
-            times = times_matrix[batch_idx]
+            times = times_matrix[batch_idx]  # (T,)
             sample_branch = branch_inputs[batch_idx : batch_idx + 1]
             sample_nu = nu_tensor[batch_idx]
-            sample_forcing = forcing_tensor[batch_idx]
+            forcing_u_flat = forcing_u_tensor[batch_idx].reshape(-1)  # (n_pts,)
+            forcing_v_flat = forcing_v_tensor[batch_idx].reshape(-1)  # (n_pts,)
 
-            for t_scalar in times:
-                t_col = torch.ones((physics_coords_xy.shape[0], 1), dtype=dtype, device=device) * t_scalar
-                trunk_coords = torch.cat([physics_coords_xy, t_col], dim=1).requires_grad_(True)
+            # 建立合併 trunk：(T, 3, n_pts, 4) → (T*3*n_pts, 4)
+            # 每個位置 [t, c, j] 對應時間 t、分量 c、空間點 j
+            xy = physics_coords_xy.unsqueeze(0).unsqueeze(0).expand(T, 3, n_pts, 2)
+            t_col = times.reshape(T, 1, 1, 1).expand(T, 3, n_pts, 1)
+            c_col = comp_vals.reshape(1, 3, 1, 1).expand(T, 3, n_pts, 1)
+            trunk = torch.cat([xy, t_col, c_col], dim=-1).reshape(T * 3 * n_pts, 4).requires_grad_(True)
 
-                pred_norm = model.net((sample_branch, trunk_coords))[0]
-                omega_flat = pred_norm * self.target_std + self.target_mean
-                grads = torch.autograd.grad(
-                    omega_flat.sum(),
-                    trunk_coords,
-                    create_graph=True,
-                )[0]
-                omega_x = grads[:, 0].reshape(grid_size, grid_size)
-                omega_y = grads[:, 1].reshape(grid_size, grid_size)
-                omega_t = grads[:, 2].reshape(grid_size, grid_size)
-                omega = omega_flat.reshape(grid_size, grid_size)
+            # 單次 forward pass：branch (1,...) × trunk (T*3*n_pts, 4) → (T*3*n_pts,)
+            pred_norm = model.net((sample_branch, trunk))[0]
 
-                omega_hat = torch.fft.fft2(omega)
-                if self._spectral_kx_complex is None or self._spectral_ky_complex is None or self._spectral_k2_complex is None:
-                    raise RuntimeError("spectral cache 尚未初始化。")
-                kx = self._spectral_kx_complex
-                ky = self._spectral_ky_complex
-                k2 = self._spectral_k2_complex
+            # Per-component 反正規化：pred_3d shape (T, 3, n_pts)
+            pred_3d = pred_norm.reshape(T, 3, n_pts) * t_stds + t_means
 
-                psi_hat = torch.zeros_like(omega_hat)
-                psi_hat[self._spectral_nonzero_mask] = (
-                    omega_hat[self._spectral_nonzero_mask] / k2[self._spectral_nonzero_mask]
-                )
+            # 一次 backward 取所有一階導數 (T*3*n_pts, 4)
+            first_grads = torch.autograd.grad(pred_3d.sum(), trunk, create_graph=True)[0]
 
-                u = torch.fft.ifft2(1j * ky * psi_hat).real
-                v = torch.fft.ifft2(-1j * kx * psi_hat).real
-                laplace_omega = torch.fft.ifft2(-(kx**2 + ky**2) * omega_hat).real
-                residual = omega_t + u * omega_x + v * omega_y - sample_nu * laplace_omega - sample_forcing
-                loss_sum = loss_sum + torch.mean(residual**2)
-                loss_count += 1
-        return loss_sum / float(max(1, loss_count))
+            grads_4d = first_grads.reshape(T, 3, n_pts, 4)
+
+            u_flat = pred_3d[:, 0, :]   # (T, n_pts)
+            v_flat = pred_3d[:, 1, :]
+            u_x = grads_4d[:, 0, :, 0]  # du/dx
+            u_y = grads_4d[:, 0, :, 1]  # du/dy
+            u_t = grads_4d[:, 0, :, 2]  # du/dt
+            v_x = grads_4d[:, 1, :, 0]
+            v_y = grads_4d[:, 1, :, 1]
+            v_t = grads_4d[:, 1, :, 2]
+            p_x = grads_4d[:, 2, :, 0]
+            p_y = grads_4d[:, 2, :, 1]
+
+            # 四次 backward 取二階導數（各覆蓋所有 T 個時間點，vs 舊做法 T×4 次）
+            u_xx = torch.autograd.grad(u_x.sum(), trunk, create_graph=True)[0].reshape(T, 3, n_pts, 4)[:, 0, :, 0]
+            u_yy = torch.autograd.grad(u_y.sum(), trunk, create_graph=True)[0].reshape(T, 3, n_pts, 4)[:, 0, :, 1]
+            v_xx = torch.autograd.grad(v_x.sum(), trunk, create_graph=True)[0].reshape(T, 3, n_pts, 4)[:, 1, :, 0]
+            v_yy = torch.autograd.grad(v_y.sum(), trunk, create_graph=True)[0].reshape(T, 3, n_pts, 4)[:, 1, :, 1]
+
+            # NS residuals：(T, n_pts)
+            residual_x = u_t + u_flat * u_x + v_flat * u_y + p_x - sample_nu * (u_xx + u_yy) - forcing_u_flat
+            residual_y = v_t + u_flat * v_x + v_flat * v_y + p_y - sample_nu * (v_xx + v_yy) - forcing_v_flat
+            residual_c = u_x + v_y
+
+            # Per-time-step MSE：(T,)
+            loss_x_t = residual_x.pow(2).mean(dim=1)
+            loss_y_t = residual_y.pow(2).mean(dim=1)
+            loss_c_t = residual_c.pow(2).mean(dim=1)
+            total_t = loss_x_t + loss_y_t + self.physics_continuity_weight * loss_c_t
+
+            # Causal weighting：w_t = exp(-eps * Σ_{s<t} total_s)，向量化取代 Python loop
+            cumulative = torch.cat([total_t.new_zeros(1), torch.cumsum(total_t[:-1].detach(), dim=0)])
+            weights = torch.exp(-self.physics_causal_epsilon * cumulative)  # (T,)
+
+            # Per-sample 歸一化後累加（確保每個 sample 貢獻相同）
+            safe_w = weights.sum().clamp(min=torch.finfo(dtype).eps)
+            total_loss_x = total_loss_x + (weights * loss_x_t).sum() / safe_w
+            total_loss_y = total_loss_y + (weights * loss_y_t).sum() / safe_w
+            total_loss_c = total_loss_c + (weights * loss_c_t).sum() / safe_w
+
+        loss_x = total_loss_x / num_samples
+        loss_y = total_loss_y / num_samples
+        loss_c = total_loss_c / num_samples
+        total = loss_x + loss_y + self.physics_continuity_weight * loss_c
+        if return_components:
+            return total, {
+                "ns_x_mse": float(loss_x.detach().cpu().item()),
+                "ns_y_mse": float(loss_y.detach().cpu().item()),
+                "continuity_mse": float(loss_c.detach().cpu().item()),
+            }
+        return total
 
     def losses_train(self, targets, outputs, loss_fn, inputs, model, aux=None):
         supervised_loss = loss_fn(targets, outputs)
+        if self.disable_physics_loss:
+            return [supervised_loss, supervised_loss.new_zeros(())]
         branch_inputs = inputs[0]
         indices = self._last_train_indices
         if self.physics_branch_batch_size is not None and len(indices) > self.physics_branch_batch_size:
@@ -737,12 +890,15 @@ class PhysicsInformedTripleCartesianProd(Data):
             physics_coords_xy=cached["physics_coords_xy"],
             delta_t_tensor=cached["train_dt"].index_select(0, index_tensor),
             nu_tensor=cached["train_nu"].index_select(0, index_tensor),
-            forcing_tensor=cached["train_forcing"].index_select(0, index_tensor),
+            forcing_u_tensor=cached["train_forcing_u"].index_select(0, index_tensor),
+            forcing_v_tensor=cached["train_forcing_v"].index_select(0, index_tensor),
         )
         return [supervised_loss, physics_loss]
 
     def losses_test(self, targets, outputs, loss_fn, inputs, model, aux=None):
         supervised_loss = loss_fn(targets, outputs)
+        if self.disable_physics_loss:
+            return [supervised_loss, supervised_loss.new_zeros(())]
         branch_inputs = inputs[0]
         cached = self._ensure_tensor_cache(branch_inputs.device, branch_inputs.dtype)
         physics_loss = self._physics_loss(
@@ -751,7 +907,8 @@ class PhysicsInformedTripleCartesianProd(Data):
             physics_coords_xy=cached["physics_coords_xy"],
             delta_t_tensor=cached["test_dt"],
             nu_tensor=cached["test_nu"],
-            forcing_tensor=cached["test_forcing"],
+            forcing_u_tensor=cached["test_forcing_u"],
+            forcing_v_tensor=cached["test_forcing_v"],
         )
         return [supervised_loss, physics_loss]
 

@@ -7,26 +7,33 @@ temporal_stride = 1
 burn_in_steps = 100
 train_ratio = 0.8
 val_ratio = 0.1
-physics_stride = 32
-data_loss_weight = 20.0
+
+# Fast local iteration settings
+physics_stride = 64
+data_loss_weight = 10.0
 physics_loss_weight = 1.0
-physics_time_samples = 4
-physics_branch_batch_size = 4
-iterations = 20000
-batch_size = 32
+physics_time_samples = 1
+physics_branch_batch_size = 2
+physics_continuity_weight = 1.0
+physics_causal_epsilon = 1.0
+time_fourier_modes = 8
+
+iterations = 5000
+batch_size = 16
 optimizer = "adamw"
 learning_rate = 0.001
 weight_decay = 0.0001
 lr_schedule = "step"
 min_learning_rate = 1e-6
-lr_step_size = 10000
+lr_step_size = 2500
 lr_step_gamma = 0.5
 rollout_steps = 10
-checkpoint_period = 5000
-branch_hidden_dims = [512, 512]
-trunk_hidden_dims = [512, 512]
-latent_width = 256
+checkpoint_period = 1000
+
+branch_hidden_dims = [256, 256]
+trunk_hidden_dims = [256, 256]
+latent_width = 128
 use_gated_mlp = true
 early_stop_total_loss = 1e-4
 seed = 42
-artifacts_dir = "../artifacts/paper-aligned-step"
+artifacts_dir = "../artifacts/local-fast"
