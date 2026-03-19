@@ -72,6 +72,9 @@ DEFAULT_TRAIN_ARGS: dict[str, Any] = {
     "latent_width": 256,
     "use_gated_mlp": True,
     "use_transformer_branch": False,
+    "use_resnet_branch": False,
+    "trunk_rff_features": 0,
+    "trunk_rff_sigma": 1.0,
     "transformer_model_dim": 128,
     "transformer_num_heads": 4,
     "transformer_num_layers": 2,
@@ -200,6 +203,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--latent-width", type=int, default=None)
     parser.add_argument("--use-gated-mlp", action="store_true", default=None)
     parser.add_argument("--use-transformer-branch", action="store_true", default=None)
+    parser.add_argument("--use-resnet-branch", action="store_true", default=None)
+    parser.add_argument("--trunk-rff-features", type=int, default=None)
+    parser.add_argument("--trunk-rff-sigma", type=float, default=None)
     parser.add_argument("--transformer-model-dim", type=int, default=None)
     parser.add_argument("--transformer-num-heads", type=int, default=None)
     parser.add_argument("--transformer-num-layers", type=int, default=None)
@@ -258,6 +264,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise ValueError("physics_causal_epsilon 不可小於 0。")
     if int(merged["time_fourier_modes"]) < 0:
         raise ValueError("time_fourier_modes 不可小於 0。")
+    if int(merged["trunk_rff_features"]) < 0:
+        raise ValueError("trunk_rff_features 不可小於 0。")
+    if float(merged["trunk_rff_sigma"]) <= 0.0:
+        raise ValueError("trunk_rff_sigma 必須為正數。")
     if int(merged["lr_warmup_steps"]) < 0:
         raise ValueError("lr_warmup_steps 不可小於 0。")
     if not (0.0 < float(merged["lr_warmup_start_factor"]) <= 1.0):
@@ -1489,6 +1499,9 @@ def main() -> None:
                 "latent_width": args.latent_width,
                 "use_gated_mlp": args.use_gated_mlp,
                 "use_transformer_branch": args.use_transformer_branch,
+                "use_resnet_branch": args.use_resnet_branch,
+                "trunk_rff_features": args.trunk_rff_features,
+                "trunk_rff_sigma": args.trunk_rff_sigma,
                 "transformer_model_dim": args.transformer_model_dim,
                 "transformer_num_heads": args.transformer_num_heads,
                 "transformer_num_layers": args.transformer_num_layers,
@@ -1550,6 +1563,9 @@ def main() -> None:
         transformer_num_layers=args.transformer_num_layers,
         transformer_ff_dim=args.transformer_ff_dim,
         transformer_dropout=args.transformer_dropout,
+        use_resnet_branch=args.use_resnet_branch,
+        trunk_rff_features=args.trunk_rff_features,
+        trunk_rff_sigma=args.trunk_rff_sigma,
     )
     net = net.to(runtime_device)
     print_section("Model")
@@ -1557,14 +1573,27 @@ def main() -> None:
         json.dumps(
             {
                 "branch_shape": list(X_train[0].shape[1:]),
-                "branch_encoder": "transformer" if args.use_transformer_branch else ("gated_mlp" if args.use_gated_mlp else "mlp"),
+                "branch_encoder": (
+                    "transformer" if args.use_transformer_branch
+                    else "resnet" if args.use_resnet_branch
+                    else "gated_mlp" if args.use_gated_mlp
+                    else "mlp"
+                ),
                 "branch_layers": [int(np.prod(np.asarray(X_train[0].shape[1:], dtype=np.int64))), *args.branch_hidden_dims, args.latent_width],
                 "trunk_raw_input_dim": int(X_train[1].shape[1]),
                 "time_fourier_modes": args.time_fourier_modes,
-                "trunk_layers": [int(X_train[1].shape[1]) + 2 * args.time_fourier_modes, *args.trunk_hidden_dims, args.latent_width],
+                "trunk_encoder": "rff" if args.trunk_rff_features > 0 else "time_fourier",
+                "trunk_rff_features": args.trunk_rff_features,
+                "trunk_rff_sigma": args.trunk_rff_sigma,
+                "trunk_layers": (
+                    [2 * args.trunk_rff_features + 8, *args.trunk_hidden_dims, args.latent_width]
+                    if args.trunk_rff_features > 0
+                    else [int(X_train[1].shape[1]) + 2 * args.time_fourier_modes, *args.trunk_hidden_dims, args.latent_width]
+                ),
                 "trainable_parameters": count_trainable_parameters(net),
                 "use_gated_mlp": args.use_gated_mlp,
                 "use_transformer_branch": args.use_transformer_branch,
+                "use_resnet_branch": args.use_resnet_branch,
                 "device": str(next(net.parameters()).device),
             },
             indent=2,
@@ -1668,6 +1697,9 @@ def main() -> None:
                 "latent_width": args.latent_width,
                 "use_gated_mlp": args.use_gated_mlp,
                 "use_transformer_branch": args.use_transformer_branch,
+                "use_resnet_branch": args.use_resnet_branch,
+                "trunk_rff_features": args.trunk_rff_features,
+                "trunk_rff_sigma": args.trunk_rff_sigma,
                 "transformer_model_dim": args.transformer_model_dim,
                 "transformer_num_heads": args.transformer_num_heads,
                 "transformer_num_layers": args.transformer_num_layers,
@@ -1689,11 +1721,21 @@ def main() -> None:
             },
             "model": {
                 "branch_shape": list(X_train[0].shape[1:]),
-                "branch_encoder": "transformer" if args.use_transformer_branch else ("gated_mlp" if args.use_gated_mlp else "mlp"),
+                "branch_encoder": (
+                    "transformer" if args.use_transformer_branch
+                    else "resnet" if args.use_resnet_branch
+                    else "gated_mlp" if args.use_gated_mlp
+                    else "mlp"
+                ),
+                "trunk_encoder": "rff" if args.trunk_rff_features > 0 else "time_fourier",
                 "branch_layers": [int(np.prod(np.asarray(X_train[0].shape[1:], dtype=np.int64))), *args.branch_hidden_dims, args.latent_width],
                 "trunk_raw_input_dim": int(X_train[1].shape[1]),
                 "time_fourier_modes": args.time_fourier_modes,
-                "trunk_layers": [int(X_train[1].shape[1]) + 2 * args.time_fourier_modes, *args.trunk_hidden_dims, args.latent_width],
+                "trunk_layers": (
+                    [2 * args.trunk_rff_features + 8, *args.trunk_hidden_dims, args.latent_width]
+                    if args.trunk_rff_features > 0
+                    else [int(X_train[1].shape[1]) + 2 * args.time_fourier_modes, *args.trunk_hidden_dims, args.latent_width]
+                ),
                 "trainable_parameters": count_trainable_parameters(net),
                 "use_gated_mlp": args.use_gated_mlp,
                 "use_transformer_branch": args.use_transformer_branch,
