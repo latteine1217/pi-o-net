@@ -1,0 +1,209 @@
+# src/pi_onet/ldc_dataset.py
+"""LDC multi-Re dataset loader.
+
+What: Load cavity flow .mat files, sample sensor locations, build branch/trunk tensors.
+Why: Steady-state LDC has no temporal dimension; structure is simpler than Kolmogorov pipeline.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Sequence
+
+import numpy as np
+import scipy.io
+
+RE_MEAN: float = 4000.0
+RE_STD: float = 816.5  # population std of {3000, 4000, 5000}; update if Re set changes
+
+
+def load_ldc_mat(path: Path) -> dict[str, np.ndarray]:
+    """What: Load a single LDC .mat file; return flattened 1-D field arrays."""
+    data = scipy.io.loadmat(str(path))
+    return {
+        "x": data["X_ref"].ravel().astype(np.float64),
+        "y": data["Y_ref"].ravel().astype(np.float64),
+        "u": data["U_ref"].ravel().astype(np.float64),
+        "v": data["V_ref"].ravel().astype(np.float64),
+        "p": data["P_ref"].ravel().astype(np.float64),
+    }
+
+
+def sample_interior_indices(
+    rng: np.random.Generator, grid_size: int, n: int
+) -> np.ndarray:
+    """What: Sample n flat indices from interior rows/cols [1:grid_size-1].
+
+    Why: Exclude boundary rows/columns so interior sensors do not overlap with
+         boundary sensors that have explicit BC meaning.
+    """
+    inner = grid_size - 2  # e.g. 255 for grid_size=257
+    rows = np.repeat(np.arange(1, grid_size - 1), inner)  # [inner*inner]
+    cols = np.tile(np.arange(1, grid_size - 1), inner)
+    pool = rows * grid_size + cols  # flat indices
+    chosen = rng.choice(pool, size=n, replace=False)
+    return chosen
+
+
+def sample_boundary_indices(grid_size: int, n_per_wall: int) -> np.ndarray:
+    """What: Return n_per_wall uniformly spaced flat indices per wall (4 walls), no duplicates.
+
+    Why: Boundary sensors give the branch information about how well BCs are satisfied,
+         complementing interior sensors that observe the flow structure.
+
+    Note: Top/bottom walls cover all columns (0..grid_size-1).
+          Left/right walls cover only interior rows (1..grid_size-2) to avoid corner
+          overlap with top/bottom, guaranteeing exactly 4*n_per_wall unique indices.
+    """
+    cols = np.linspace(0, grid_size - 1, n_per_wall, dtype=int)
+    top    = (grid_size - 1) * grid_size + cols   # row = grid_size-1, all cols
+    bottom = cols                                  # row = 0, all cols
+    # Interior rows only: avoids corners already claimed by top/bottom
+    inner_rows = np.linspace(1, grid_size - 2, n_per_wall, dtype=int)
+    left  = inner_rows * grid_size + 0                  # col = 0
+    right = inner_rows * grid_size + (grid_size - 1)    # col = grid_size-1
+    return np.concatenate([top, bottom, left, right])
+
+
+@dataclass
+class LDCDataset:
+    """What: Holds all Re cases and exposes branch/trunk/ref tensors for training.
+
+    Why: Encapsulates sensor sampling and train/val split so ldc_train.py stays clean.
+
+    Attributes:
+        branch_all:      [num_re, branch_dim]  — one branch vector per Re case
+        re_values:       [num_re]              — raw Re values (not normalised)
+        train_indices:   list of [n_train]     — flat grid indices in train pool per Re
+        val_indices:     list of [n_val]       — flat grid indices in val pool per Re
+        grids:           list of dicts         — raw x/y/u/v/p arrays per Re case
+        sensor_interior: [n_interior]          — flat sensor indices (shared)
+        sensor_boundary: [n_boundary*4]        — flat boundary sensor indices (shared)
+    """
+
+    branch_all: np.ndarray
+    re_values: np.ndarray
+    train_indices: list[np.ndarray]
+    val_indices: list[np.ndarray]
+    grids: list[dict[str, np.ndarray]]
+    sensor_interior: np.ndarray
+    sensor_boundary: np.ndarray
+
+    def __init__(
+        self,
+        mat_paths: Sequence[Path | str],
+        num_interior_sensors: int,
+        num_boundary_sensors: int,
+        train_ratio: float,
+        seed: int,
+        re_list: Sequence[float] | None = None,
+    ) -> None:
+        """What: Load all .mat files, sample sensors, build branch vectors, split data."""
+        rng = np.random.default_rng(seed)
+        grids = [load_ldc_mat(Path(p)) for p in mat_paths]
+        n_pts = len(grids[0]["x"])
+        grid_size = int(round(n_pts ** 0.5))
+
+        # Sensor locations (shared across all Re)
+        self.sensor_interior = sample_interior_indices(rng, grid_size, num_interior_sensors)
+        n_per_wall = num_boundary_sensors // 4
+        self.sensor_boundary = sample_boundary_indices(grid_size, n_per_wall)
+        self.grids = grids
+
+        # Re values
+        if re_list is not None:
+            re_arr = np.array(re_list, dtype=np.float64)
+        else:
+            # Infer Re from filenames: cavity_Re<N>_*.mat
+            re_arr = np.array([
+                float(Path(p).stem.split("_Re")[1].split("_")[0])
+                for p in mat_paths
+            ], dtype=np.float64)
+        self.re_values = re_arr
+
+        # Build branch vectors: [num_re, 1 + n_int*3 + n_bnd*3]
+        branch_list = []
+        for i, grid in enumerate(grids):
+            re_norm = (re_arr[i] - RE_MEAN) / RE_STD
+            u_int = grid["u"][self.sensor_interior]
+            v_int = grid["v"][self.sensor_interior]
+            p_int = grid["p"][self.sensor_interior]
+            u_bnd = grid["u"][self.sensor_boundary]
+            v_bnd = grid["v"][self.sensor_boundary]
+            p_bnd = grid["p"][self.sensor_boundary]
+            vec = np.concatenate([[re_norm], u_int, v_int, p_int, u_bnd, v_bnd, p_bnd])
+            branch_list.append(vec)
+        self.branch_all = np.stack(branch_list, axis=0).astype(np.float32)
+
+        # Train / val split per Re (same random split for all Re)
+        all_idx = np.arange(n_pts)
+        rng.shuffle(all_idx)
+        n_train = int(len(all_idx) * train_ratio)
+        train_idx = all_idx[:n_train]
+        val_idx = all_idx[n_train:]
+        self.train_indices = [train_idx for _ in grids]
+        self.val_indices = [val_idx for _ in grids]
+
+    def sample_train_trunk(
+        self, rng: np.random.Generator, n_per_re: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """What: Sample n_per_re grid points per Re from train pool; replicate for c=0,1,2.
+
+        Returns:
+            trunk_pts: [n_per_re * 3, 3]  — (x, y, c) rows, c cycles 0/1/2
+            ref_vals:  [num_re, n_per_re * 3]  — reference u/v/p at each point per Re
+        """
+        # Sample the same spatial indices for all Re (simplifies trunk batching)
+        idx = rng.choice(self.train_indices[0], size=n_per_re, replace=False)
+        grid0 = self.grids[0]
+        x_pts = grid0["x"][idx].astype(np.float32)
+        y_pts = grid0["y"][idx].astype(np.float32)
+
+        # Replicate each point 3 times for c = 0, 1, 2
+        x_rep = np.repeat(x_pts, 3)
+        y_rep = np.repeat(y_pts, 3)
+        c_rep = np.tile([0, 1, 2], n_per_re).astype(np.float32)
+        trunk_pts = np.stack([x_rep, y_rep, c_rep], axis=1)  # [n_per_re*3, 3]
+
+        # Reference values per Re
+        ref_list = []
+        for i, grid in enumerate(self.grids):
+            u_vals = grid["u"][idx].astype(np.float32)
+            v_vals = grid["v"][idx].astype(np.float32)
+            p_vals = grid["p"][idx].astype(np.float32)
+            # Interleave: u0,v0,p0, u1,v1,p1, ...
+            ref = np.empty(n_per_re * 3, dtype=np.float32)
+            ref[0::3] = u_vals
+            ref[1::3] = v_vals
+            ref[2::3] = p_vals
+            ref_list.append(ref)
+        ref_vals = np.stack(ref_list, axis=0)  # [num_re, n_per_re*3]
+
+        return trunk_pts, ref_vals
+
+    def get_val_trunk(self) -> tuple[np.ndarray, np.ndarray]:
+        """What: Return full val set trunk and ref values for checkpoint evaluation."""
+        return self.sample_val_trunk_all()
+
+    def sample_val_trunk_all(self) -> tuple[np.ndarray, np.ndarray]:
+        """What: Build trunk/ref tensors from the full val pool of Re case 0."""
+        idx = self.val_indices[0]
+        grid0 = self.grids[0]
+        x_pts = grid0["x"][idx].astype(np.float32)
+        y_pts = grid0["y"][idx].astype(np.float32)
+        x_rep = np.repeat(x_pts, 3)
+        y_rep = np.repeat(y_pts, 3)
+        c_rep = np.tile([0, 1, 2], len(idx)).astype(np.float32)
+        trunk_pts = np.stack([x_rep, y_rep, c_rep], axis=1)
+
+        ref_list = []
+        for grid in self.grids:
+            u_vals = grid["u"][idx].astype(np.float32)
+            v_vals = grid["v"][idx].astype(np.float32)
+            p_vals = grid["p"][idx].astype(np.float32)
+            ref = np.empty(len(idx) * 3, dtype=np.float32)
+            ref[0::3] = u_vals
+            ref[1::3] = v_vals
+            ref[2::3] = p_vals
+            ref_list.append(ref)
+        return trunk_pts, np.stack(ref_list, axis=0)
