@@ -14,7 +14,7 @@ import os
 import time  # noqa: F401 - used in training loop (Task 4)
 import tomllib  # noqa: F401 - used in training loop (Task 4)
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 os.environ.setdefault("DDE_BACKEND", "pytorch")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -165,11 +165,13 @@ def create_ldc_model(
 def _grad(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """What: First-order partial derivative dy/dx via autograd.
 
-    Why: Checks grad_fn first — a constant tensor (e.g. v=zeros(n,1) with no grad_fn)
-         has zero derivative by definition; returns zeros without invoking autograd.
-         allow_unused=True handles the case where y has a graph but doesn't use x.
+    Why: allow_unused=True handles the case where y has a computation graph but
+         doesn't use x; PyTorch returns None in that case, which we convert to zeros.
+         A pre-check on y.grad_fn guards against plain constant tensors (no graph at all)
+         that would otherwise raise instead of returning zero — distinct from the removed
+         early-exit that incorrectly short-circuited tensors still in the computation graph.
     """
-    if y.grad_fn is None:
+    if y.grad_fn is None and not y.requires_grad:
         return torch.zeros_like(x)
     grad = torch.autograd.grad(y, x, torch.ones_like(y), create_graph=True, allow_unused=True)[0]
     if grad is None:
@@ -178,9 +180,9 @@ def _grad(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 
 
 def steady_ns_residuals(
-    u_fn,
-    v_fn,
-    p_fn,
+    u_fn: Callable,
+    v_fn: Callable,
+    p_fn: Callable,
     xy: torch.Tensor,
     re: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -225,7 +227,7 @@ def steady_ns_residuals(
 
 
 def compute_bc_loss(
-    model_fn,
+    model_fn: Callable,
     n_per_wall: int,
     device: torch.device,
 ) -> torch.Tensor:
@@ -233,24 +235,27 @@ def compute_bc_loss(
 
     Why: LDC BCs: top (y=1) u=1 v=0; others u=0 v=0. Pressure excluded — no wall pressure BC.
     n_per_wall: number of points per wall (total num_bc_points // 4).
+    return is sum of 8 MSE terms (2 components × 4 walls); bc_loss_weight should be calibrated accordingly.
     """
-    with torch.device(device):
-        t_closed = torch.linspace(0.0, 1.0, n_per_wall, dtype=dde_config.real(torch))
-        # Open interval for vertical walls — excludes top/bottom corners to avoid
-        # ambiguity where top-wall BC (u=1) conflicts with side-wall BC (u=0).
-        t_open = torch.linspace(0.0, 1.0, n_per_wall + 2, dtype=dde_config.real(torch))[1:-1]
-        ones_h = torch.ones(n_per_wall, dtype=dde_config.real(torch))
-        zeros_h = torch.zeros(n_per_wall, dtype=dde_config.real(torch))
-        zeros_v = torch.zeros(n_per_wall, dtype=dde_config.real(torch))
+    t_closed = torch.linspace(0.0, 1.0, n_per_wall, device=device, dtype=dde_config.real(torch))
+    # Open interval for vertical walls — excludes top/bottom corners to avoid
+    # ambiguity where top-wall BC (u=1) conflicts with side-wall BC (u=0).
+    t_open = torch.linspace(0.0, 1.0, n_per_wall + 2, device=device, dtype=dde_config.real(torch))[1:-1]
+    ones_h = torch.ones(n_per_wall, device=device, dtype=dde_config.real(torch))
+    zeros_h = torch.zeros(n_per_wall, device=device, dtype=dde_config.real(torch))
+    zeros_v = torch.zeros(n_per_wall, device=device, dtype=dde_config.real(torch))
 
-        total_loss = torch.zeros(1, dtype=dde_config.real(torch))
-        walls = [
-            # (xy_tensor, u_target, v_target)
-            (torch.stack([t_closed, ones_h], dim=1), ones_h, zeros_h),    # top: u=1, v=0
-            (torch.stack([t_closed, zeros_h], dim=1), zeros_h, zeros_h),  # bottom: u=0, v=0
-            (torch.stack([zeros_v, t_open], dim=1), zeros_v, zeros_v),    # left: u=0, v=0
-            (torch.stack([ones_h, t_open], dim=1), zeros_v, zeros_v),     # right: u=0, v=0
-        ]
+    total_loss = torch.zeros(1, device=device, dtype=dde_config.real(torch))
+    walls = [
+        # (xy_tensor, u_target, v_target)
+        (torch.stack([t_closed, ones_h], dim=1), ones_h, zeros_h),    # top: u=1, v=0
+        (torch.stack([t_closed, zeros_h], dim=1), zeros_h, zeros_h),  # bottom: u=0, v=0
+        (torch.stack([zeros_v, t_open], dim=1), zeros_v, zeros_v),    # left: u=0, v=0
+        (torch.stack([ones_h, t_open], dim=1), zeros_v, zeros_v),     # right: u=0, v=0
+    ]
+    # Use device context so model_fn callables that create new tensors without explicit
+    # device args inherit the correct device (avoids cross-device errors on MPS/CUDA).
+    with torch.device(device):
         for xy_wall, u_target, v_target in walls:
             u_pred = model_fn(xy_wall, c=0).squeeze(1)
             v_pred = model_fn(xy_wall, c=1).squeeze(1)
@@ -259,12 +264,12 @@ def compute_bc_loss(
     return total_loss
 
 
-def compute_gauge_loss(model_fn, device: torch.device) -> torch.Tensor:
+def compute_gauge_loss(model_fn: Callable, device: torch.device) -> torch.Tensor:
     """What: Penalise p at bottom-left corner (x=0,y=0) to be 0 (pressure gauge fix).
 
     Why: Steady NS has pressure determined only up to additive constant; gauge pins it.
     """
+    corner = torch.zeros(1, 2, device=device, dtype=dde_config.real(torch))
     with torch.device(device):
-        corner = torch.zeros(1, 2, dtype=dde_config.real(torch))
         p_corner = model_fn(corner, c=2).squeeze()
     return p_corner ** 2
