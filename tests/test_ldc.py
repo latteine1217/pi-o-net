@@ -233,3 +233,65 @@ def test_create_ldc_model_mlp():
     t = torch.randn(9, 3)
     t[:, 2] = torch.tensor([0,1,2]*3).float()
     assert net(b, t).shape == (3, 9)
+
+
+# ── Task 3 tests ─────────────────────────────────────────────────────────────
+
+def test_steady_ns_residual_zero_for_linear_flow():
+    """A linear flow u=y, v=0, p=0 satisfies steady NS exactly at Re=inf (zero viscous term too)."""
+    from pi_onet.ldc_train import steady_ns_residuals
+    import torch
+
+    n = 20
+    xy = torch.rand(n, 2, requires_grad=True)
+
+    def u_fn(xy): return xy[:, 1:2]          # u = y
+    def v_fn(xy): return torch.zeros(n, 1)
+    def p_fn(xy): return torch.zeros(n, 1)
+
+    ns_x, ns_y, cont = steady_ns_residuals(u_fn, v_fn, p_fn, xy, re=1e8)
+    assert ns_x.abs().mean() < 1e-4
+    assert ns_y.abs().mean() < 1e-4
+    assert cont.abs().mean() < 1e-4
+
+
+def test_steady_ns_residual_nonzero_for_bad_flow():
+    from pi_onet.ldc_train import steady_ns_residuals
+    import torch
+
+    n = 10
+    xy = torch.rand(n, 2, requires_grad=True)
+
+    # Random flow has nonzero residuals
+    def u_fn(xy): return xy[:, 0:1] ** 2
+    def v_fn(xy): return xy[:, 1:2] ** 2
+    def p_fn(xy): return xy[:, 0:1] * xy[:, 1:2]
+
+    ns_x, ns_y, cont = steady_ns_residuals(u_fn, v_fn, p_fn, xy, re=100.0)
+    assert ns_x.abs().mean() > 1e-6 or cont.abs().mean() > 1e-6
+
+
+def test_bc_loss_zero_for_exact_bcs():
+    from pi_onet.ldc_train import compute_bc_loss
+    import torch
+
+    # Exact BCs: u=1 at top, u=0 elsewhere, v=0 everywhere
+    def model_fn(xy, c):
+        # c=0: u, c=1: v, c=2: p
+        if c == 0:
+            return torch.where(xy[:, 1:2] >= 0.999, torch.ones(len(xy), 1), torch.zeros(len(xy), 1))
+        return torch.zeros(len(xy), 1)
+
+    loss = compute_bc_loss(model_fn=model_fn, n_per_wall=5, device=torch.device("cpu"))
+    assert loss.item() < 1e-6
+
+
+def test_gauge_loss_zero_at_origin():
+    from pi_onet.ldc_train import compute_gauge_loss
+    import torch
+
+    def model_fn(xy, c):
+        return torch.zeros(len(xy), 1)  # p=0 everywhere
+
+    loss = compute_gauge_loss(model_fn=model_fn, device=torch.device("cpu"))
+    assert loss.item() < 1e-8

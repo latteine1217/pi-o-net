@@ -158,3 +158,113 @@ def create_ldc_model(
         core_net=core_net,
     )
     return LDCDeepONet(branch_net=branch_net, trunk_net=trunk_net)
+
+
+# ── Physics loss ──────────────────────────────────────────────────────────────
+
+def _grad(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """What: First-order partial derivative dy/dx via autograd.
+
+    Why: Checks grad_fn first — a constant tensor (e.g. v=zeros(n,1) with no grad_fn)
+         has zero derivative by definition; returns zeros without invoking autograd.
+         allow_unused=True handles the case where y has a graph but doesn't use x.
+    """
+    if y.grad_fn is None:
+        return torch.zeros_like(x)
+    grad = torch.autograd.grad(y, x, torch.ones_like(y), create_graph=True, allow_unused=True)[0]
+    if grad is None:
+        return torch.zeros_like(x)
+    return grad
+
+
+def steady_ns_residuals(
+    u_fn,
+    v_fn,
+    p_fn,
+    xy: torch.Tensor,
+    re: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """What: Compute steady NS and continuity residuals at collocation points.
+
+    Why: Steady incompressible NS — no time derivative; Re enters as viscous coefficient.
+
+    Args:
+        u_fn, v_fn, p_fn: callables (xy) -> [N, 1], xy has requires_grad=True
+        xy: [N, 2] collocation points with requires_grad=True
+        re: Reynolds number scalar
+
+    Returns:
+        ns_x:  [N, 1]  momentum x residual
+        ns_y:  [N, 1]  momentum y residual
+        cont:  [N, 1]  continuity residual
+    """
+    u = u_fn(xy)   # [N, 1]
+    v = v_fn(xy)   # [N, 1]
+    p = p_fn(xy)   # [N, 1]
+
+    u_xy = _grad(u, xy)            # [N, 2]: [du/dx, du/dy]
+    v_xy = _grad(v, xy)            # [N, 2]: [dv/dx, dv/dy]
+    p_xy = _grad(p, xy)            # [N, 2]: [dp/dx, dp/dy]
+
+    du_dx, du_dy = u_xy[:, 0:1], u_xy[:, 1:2]
+    dv_dx, dv_dy = v_xy[:, 0:1], v_xy[:, 1:2]
+    dp_dx, dp_dy = p_xy[:, 0:1], p_xy[:, 1:2]
+
+    # Second derivatives
+    du_dx2 = _grad(du_dx, xy)[:, 0:1]   # d²u/dx²
+    du_dy2 = _grad(du_dy, xy)[:, 1:2]   # d²u/dy²
+    dv_dx2 = _grad(dv_dx, xy)[:, 0:1]   # d²v/dx²
+    dv_dy2 = _grad(dv_dy, xy)[:, 1:2]   # d²v/dy²
+
+    nu = 1.0 / float(re)
+    ns_x = u * du_dx + v * du_dy + dp_dx - nu * (du_dx2 + du_dy2)
+    ns_y = u * dv_dx + v * dv_dy + dp_dy - nu * (dv_dx2 + dv_dy2)
+    cont = du_dx + dv_dy
+
+    return ns_x, ns_y, cont
+
+
+def compute_bc_loss(
+    model_fn,
+    n_per_wall: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """What: Compute Dirichlet BC loss for u and v on all 4 walls.
+
+    Why: LDC BCs: top (y=1) u=1 v=0; others u=0 v=0. Pressure excluded — no wall pressure BC.
+    n_per_wall: number of points per wall (total num_bc_points // 4).
+    """
+    with torch.device(device):
+        t_closed = torch.linspace(0.0, 1.0, n_per_wall, dtype=dde_config.real(torch))
+        # Open interval for vertical walls — excludes top/bottom corners to avoid
+        # ambiguity where top-wall BC (u=1) conflicts with side-wall BC (u=0).
+        t_open = torch.linspace(0.0, 1.0, n_per_wall + 2, dtype=dde_config.real(torch))[1:-1]
+        ones_h = torch.ones(n_per_wall, dtype=dde_config.real(torch))
+        zeros_h = torch.zeros(n_per_wall, dtype=dde_config.real(torch))
+        zeros_v = torch.zeros(n_per_wall, dtype=dde_config.real(torch))
+
+        total_loss = torch.zeros(1, dtype=dde_config.real(torch))
+        walls = [
+            # (xy_tensor, u_target, v_target)
+            (torch.stack([t_closed, ones_h], dim=1), ones_h, zeros_h),    # top: u=1, v=0
+            (torch.stack([t_closed, zeros_h], dim=1), zeros_h, zeros_h),  # bottom: u=0, v=0
+            (torch.stack([zeros_v, t_open], dim=1), zeros_v, zeros_v),    # left: u=0, v=0
+            (torch.stack([ones_h, t_open], dim=1), zeros_v, zeros_v),     # right: u=0, v=0
+        ]
+        for xy_wall, u_target, v_target in walls:
+            u_pred = model_fn(xy_wall, c=0).squeeze(1)
+            v_pred = model_fn(xy_wall, c=1).squeeze(1)
+            total_loss = total_loss + torch.mean((u_pred - u_target) ** 2)
+            total_loss = total_loss + torch.mean((v_pred - v_target) ** 2)
+    return total_loss
+
+
+def compute_gauge_loss(model_fn, device: torch.device) -> torch.Tensor:
+    """What: Penalise p at bottom-left corner (x=0,y=0) to be 0 (pressure gauge fix).
+
+    Why: Steady NS has pressure determined only up to additive constant; gauge pins it.
+    """
+    with torch.device(device):
+        corner = torch.zeros(1, 2, dtype=dde_config.real(torch))
+        p_corner = model_fn(corner, c=2).squeeze()
+    return p_corner ** 2
