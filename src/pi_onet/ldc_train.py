@@ -47,7 +47,7 @@ DEFAULT_LDC_ARGS: dict[str, Any] = {
     "bc_loss_weight": 1.0,
     "gauge_loss_weight": 1.0,
     "iterations": 10000,
-    "batch_size": 3,
+    "batch_size": 3,  # TODO: currently unused — all Re cases processed together per step
     "optimizer": "adamw",
     "learning_rate": 1e-3,
     "weight_decay": 1e-4,
@@ -173,6 +173,8 @@ def _grad(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
     if y.grad_fn is None and not y.requires_grad:
         return torch.zeros_like(x)
+    # create_graph=True required for second-order derivatives (Laplacian in NS).
+    # IMPORTANT: xy_phys is recreated each step — do NOT accumulate graphs across steps.
     grad = torch.autograd.grad(y, x, torch.ones_like(y), create_graph=True, allow_unused=True)[0]
     if grad is None:
         return torch.zeros_like(x)
@@ -342,7 +344,6 @@ def train_ldc(args: dict[str, Any]) -> None:
 
     device = configure_torch_runtime(args["device"])
     torch.manual_seed(args["seed"])
-    np.random.seed(args["seed"])
     rng = np.random.default_rng(args["seed"])
 
     artifacts_dir = Path(args["artifacts_dir"])
@@ -418,15 +419,16 @@ def train_ldc(args: dict[str, Any]) -> None:
         l_data = torch.mean((pred - ref_t) ** 2)
 
         # ── Physics loss (shared collocation pts across Re) ──
-        xy_phys_np = np.random.uniform(0.0, 1.0, (args["num_physics_points"], 2)).astype(np.float32)
+        xy_phys_np = rng.uniform(0.0, 1.0, (args["num_physics_points"], 2)).astype(np.float32)
         xy_phys = torch.tensor(xy_phys_np, device=device, requires_grad=True)
 
         l_ns_total = torch.zeros(1, device=device, dtype=dde_config.real(torch))
         l_cont_total = torch.zeros(1, device=device, dtype=dde_config.real(torch))
         for i in range(num_re):
-            def u_fn(xy, i=i): return make_model_fn(net, branch_all[i:i+1], device)(xy, 0)
-            def v_fn(xy, i=i): return make_model_fn(net, branch_all[i:i+1], device)(xy, 1)
-            def p_fn(xy, i=i): return make_model_fn(net, branch_all[i:i+1], device)(xy, 2)
+            model_fn_i = make_model_fn(net, branch_all[i:i+1], device)
+            u_fn = lambda xy, fn=model_fn_i: fn(xy, 0)
+            v_fn = lambda xy, fn=model_fn_i: fn(xy, 1)
+            p_fn = lambda xy, fn=model_fn_i: fn(xy, 2)
             ns_x, ns_y, cont = steady_ns_residuals(u_fn, v_fn, p_fn, xy_phys, re=re_values[i])
             l_ns_total = l_ns_total + torch.mean(ns_x**2) + torch.mean(ns_y**2)
             l_cont_total = l_cont_total + torch.mean(cont**2)
@@ -434,7 +436,8 @@ def train_ldc(args: dict[str, Any]) -> None:
         l_cont_total = l_cont_total / num_re
         l_physics = l_ns_total + args["physics_continuity_weight"] * l_cont_total
 
-        # ── BC loss (BCs are Re-independent; use first Re case) ──
+        # BC/gauge losses use Re case 0 only — BCs are Re-independent, and branch_net weights
+        # are shared so gradients still propagate through all Re path embeddings.
         model_fn_re0 = make_model_fn(net, branch_all[0:1], device)
         l_bc = compute_bc_loss(model_fn=model_fn_re0, n_per_wall=n_bc_per_wall, device=device)
         l_gauge = compute_gauge_loss(model_fn=model_fn_re0, device=device)
