@@ -1,0 +1,35 @@
+[train]
+data_files = [
+  "../data/ldc/cavity_Re3000_256_Uniform.mat",
+  "../data/ldc/cavity_Re4000_256_Uniform.mat",
+  "../data/ldc/cavity_Re5000_256_Uniform.mat",
+]
+num_interior_sensors = 80
+num_boundary_sensors = 20
+num_trunk_points = 2048
+num_physics_points = 1024
+num_bc_points = 100
+branch_hidden_dims = [256, 256]
+trunk_hidden_dims = [256, 256]
+trunk_rff_features = 128
+trunk_rff_sigma = 5.0
+latent_width = 128
+use_resnet_branch = true
+data_loss_weight = 1.0
+physics_loss_weight = 0.1
+physics_continuity_weight = 1.0
+bc_loss_weight = 1.0
+gauge_loss_weight = 1.0
+iterations = 10000
+batch_size = 3
+optimizer = "adamw"
+learning_rate = 0.001
+weight_decay = 0.0001
+lr_schedule = "step"
+lr_step_size = 5000
+lr_step_gamma = 0.5
+min_learning_rate = 1e-6
+checkpoint_period = 2000
+seed = 42
+device = "auto"
+artifacts_dir = "../artifacts/ldc-resnet-rff"
