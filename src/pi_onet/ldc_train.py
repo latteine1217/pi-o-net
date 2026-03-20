@@ -9,10 +9,10 @@ Why:
 """
 from __future__ import annotations
 
-import json
+import json  # noqa: F401 - used in training loop (Task 4)
 import os
-import time
-import tomllib
+import time  # noqa: F401 - used in training loop (Task 4)
+import tomllib  # noqa: F401 - used in training loop (Task 4)
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,7 @@ import numpy as np
 import torch
 from deepxde import config as dde_config
 
-from pi_onet.train import ResNetBranchNet, SimpleMLP, configure_torch_runtime
+from pi_onet.train import ResNetBranchNet, SimpleMLP, configure_torch_runtime  # noqa: F401 - configure_torch_runtime used in training loop (Task 4)
 
 
 # ── Default config ────────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ class LDCDeepONet(torch.nn.Module):
         )
 
     def forward(self, branch_input: torch.Tensor, trunk_input: torch.Tensor) -> torch.Tensor:
-        """What: Forward pass; branch_input [batch_Re, 301], trunk_input [N_pts, 3]."""
+        """What: Forward pass; branch_input [batch_Re, branch_dim], trunk_input [N_pts, 3]."""
         b = self.branch_net(branch_input)   # [batch_Re, latent_width]
         t = self.trunk_net(trunk_input)     # [N_pts, latent_width]
         return b @ t.T + self.bias          # [batch_Re, N_pts]
