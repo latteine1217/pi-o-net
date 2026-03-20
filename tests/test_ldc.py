@@ -118,3 +118,118 @@ def test_ldc_dataset_val_trunk_shapes(tmp_path):
     assert ref_vals.shape[0] == 3  # 3 Re cases
     assert trunk_pts.shape[0] == ref_vals.shape[1]
     assert set(trunk_pts[:, 2].astype(int).tolist()).issubset({0, 1, 2})
+
+
+# ── Task 2 tests ─────────────────────────────────────────────────────────────
+
+def test_ldc_fourier_trunk_output_shape():
+    from pi_onet.ldc_train import LDCFourierTrunkNet
+    from pi_onet.train import SimpleMLP
+    from deepxde import config as dde_config
+    import torch
+    num_features, sigma, latent_width = 32, 5.0, 64
+    core = SimpleMLP(
+        layer_sizes=[2 * num_features + 8, 64, latent_width],
+        activation="tanh",
+        kernel_initializer="Glorot normal",
+    )
+    trunk = LDCFourierTrunkNet(num_features=num_features, sigma=sigma, core_net=core)
+    x = torch.randn(20, 3)  # (x, y, c)
+    x[:, 2] = torch.randint(0, 3, (20,)).float()
+    out = trunk(x)
+    assert out.shape == (20, latent_width)
+
+
+def test_ldc_fourier_trunk_b_shape():
+    from pi_onet.ldc_train import LDCFourierTrunkNet
+    from pi_onet.train import SimpleMLP
+    num_features = 32
+    core = SimpleMLP([2*num_features+8, 64], "tanh", "Glorot normal")
+    trunk = LDCFourierTrunkNet(num_features=num_features, sigma=5.0, core_net=core)
+    assert trunk.B.shape == (2, num_features)  # NOT (3, num_features)
+
+
+def test_ldc_fourier_trunk_b_not_trainable():
+    from pi_onet.ldc_train import LDCFourierTrunkNet
+    from pi_onet.train import SimpleMLP
+    core = SimpleMLP([72, 64], "tanh", "Glorot normal")
+    trunk = LDCFourierTrunkNet(num_features=32, sigma=5.0, core_net=core)
+    param_names = [n for n, _ in trunk.named_parameters()]
+    assert "B" not in param_names
+
+
+def test_ldc_fourier_trunk_rejects_zero_features():
+    from pi_onet.ldc_train import LDCFourierTrunkNet
+    from pi_onet.train import SimpleMLP
+    with pytest.raises(ValueError):
+        LDCFourierTrunkNet(num_features=0, sigma=5.0, core_net=SimpleMLP([8, 4], "tanh", "Glorot normal"))
+
+
+def test_ldc_deeponet_forward_shape():
+    from pi_onet.ldc_train import LDCDeepONet, LDCFourierTrunkNet
+    from pi_onet.train import ResNetBranchNet, SimpleMLP
+    import torch
+    latent = 64
+    branch = ResNetBranchNet(flat_dim=301, hidden_dims=[128, 128], latent_width=latent)
+    core = SimpleMLP([2*32+8, 128, latent], "tanh", "Glorot normal")
+    trunk = LDCFourierTrunkNet(num_features=32, sigma=5.0, core_net=core)
+    net = LDCDeepONet(branch_net=branch, trunk_net=trunk)
+    b_in = torch.randn(3, 301)    # 3 Re cases
+    t_in = torch.randn(60, 3)     # 20 pts × 3 components
+    t_in[:, 2] = torch.tensor([0,1,2]*20).float()
+    out = net(b_in, t_in)
+    assert out.shape == (3, 60)
+
+
+def test_ldc_deeponet_backward():
+    from pi_onet.ldc_train import LDCDeepONet, LDCFourierTrunkNet
+    from pi_onet.train import SimpleMLP
+    import torch
+    latent = 32
+    branch = SimpleMLP([301, 64, latent], "tanh", "Glorot normal")
+    core = SimpleMLP([2*16+8, 64, latent], "tanh", "Glorot normal")
+    trunk = LDCFourierTrunkNet(num_features=16, sigma=5.0, core_net=core)
+    net = LDCDeepONet(branch_net=branch, trunk_net=trunk)
+    b_in = torch.randn(3, 301)
+    t_in = torch.randn(15, 3)
+    t_in[:, 2] = torch.tensor([0,1,2]*5).float()
+    loss = net(b_in, t_in).mean()
+    loss.backward()
+    # Check at least one parameter has a gradient
+    assert any(p.grad is not None for p in net.parameters())
+
+
+def test_create_ldc_model_resnet():
+    from pi_onet.ldc_train import create_ldc_model
+    net = create_ldc_model(
+        branch_dim=301,
+        branch_hidden_dims=[128, 128],
+        trunk_hidden_dims=[64, 64],
+        latent_width=64,
+        trunk_rff_features=32,
+        trunk_rff_sigma=5.0,
+        use_resnet_branch=True,
+    )
+    import torch
+    b = torch.randn(3, 301)
+    t = torch.randn(30, 3)
+    t[:, 2] = torch.tensor([0,1,2]*10).float()
+    assert net(b, t).shape == (3, 30)
+
+
+def test_create_ldc_model_mlp():
+    from pi_onet.ldc_train import create_ldc_model
+    net = create_ldc_model(
+        branch_dim=301,
+        branch_hidden_dims=[64],
+        trunk_hidden_dims=[64],
+        latent_width=32,
+        trunk_rff_features=16,
+        trunk_rff_sigma=5.0,
+        use_resnet_branch=False,
+    )
+    import torch
+    b = torch.randn(3, 301)
+    t = torch.randn(9, 3)
+    t[:, 2] = torch.tensor([0,1,2]*3).float()
+    assert net(b, t).shape == (3, 9)
