@@ -102,3 +102,19 @@ def test_ldc_dataset_sample_trunk_train(tmp_path):
     assert ref_vals.shape == (3, 18)
     # c values must be 0, 1, or 2
     assert set(trunk_pts[:, 2].astype(int).tolist()).issubset({0, 1, 2})
+
+
+def test_ldc_dataset_val_trunk_shapes(tmp_path):
+    from pi_onet.ldc_dataset import LDCDataset
+    paths = [make_fake_mat(tmp_path, re) for re in [3000, 4000, 5000]]
+    ds = LDCDataset(
+        mat_paths=paths, num_interior_sensors=3, num_boundary_sensors=4,
+        train_ratio=0.8, seed=42,
+    )
+    trunk_pts, ref_vals = ds.sample_val_trunk_all()
+    # 5x5=25 total points, 80% train → 20 train, 5 val
+    # val trunk: 5 pts * 3 components = 15
+    assert trunk_pts.shape[1] == 3
+    assert ref_vals.shape[0] == 3  # 3 Re cases
+    assert trunk_pts.shape[0] == ref_vals.shape[1]
+    assert set(trunk_pts[:, 2].astype(int).tolist()).issubset({0, 1, 2})

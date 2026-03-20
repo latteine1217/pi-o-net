@@ -50,10 +50,9 @@ def sample_boundary_indices(grid_size: int, n_per_wall: int) -> np.ndarray:
 
     Why: Boundary sensors give the branch information about how well BCs are satisfied,
          complementing interior sensors that observe the flow structure.
-
-    Note: Top/bottom walls cover all columns (0..grid_size-1).
-          Left/right walls cover only interior rows (1..grid_size-2) to avoid corner
-          overlap with top/bottom, guaranteeing exactly 4*n_per_wall unique indices.
+         Left/right walls intentionally use only interior rows (1..grid_size-2) to avoid
+         corner duplication; physical corners are represented exclusively in the top/bottom
+         wall arrays, guaranteeing exactly 4*n_per_wall unique indices.
     """
     cols = np.linspace(0, grid_size - 1, n_per_wall, dtype=int)
     top    = (grid_size - 1) * grid_size + cols   # row = grid_size-1, all cols
@@ -74,8 +73,8 @@ class LDCDataset:
     Attributes:
         branch_all:      [num_re, branch_dim]  — one branch vector per Re case
         re_values:       [num_re]              — raw Re values (not normalised)
-        train_indices:   list of [n_train]     — flat grid indices in train pool per Re
-        val_indices:     list of [n_val]       — flat grid indices in val pool per Re
+        train_idx:       [n_train]             — flat grid indices in train pool (shared across Re)
+        val_idx:         [n_val]               — flat grid indices in val pool (shared across Re)
         grids:           list of dicts         — raw x/y/u/v/p arrays per Re case
         sensor_interior: [n_interior]          — flat sensor indices (shared)
         sensor_boundary: [n_boundary*4]        — flat boundary sensor indices (shared)
@@ -83,8 +82,8 @@ class LDCDataset:
 
     branch_all: np.ndarray
     re_values: np.ndarray
-    train_indices: list[np.ndarray]
-    val_indices: list[np.ndarray]
+    train_idx: np.ndarray
+    val_idx: np.ndarray
     grids: list[dict[str, np.ndarray]]
     sensor_interior: np.ndarray
     sensor_boundary: np.ndarray
@@ -141,69 +140,47 @@ class LDCDataset:
         n_train = int(len(all_idx) * train_ratio)
         train_idx = all_idx[:n_train]
         val_idx = all_idx[n_train:]
-        self.train_indices = [train_idx for _ in grids]
-        self.val_indices = [val_idx for _ in grids]
+        self.train_idx = train_idx
+        self.val_idx = val_idx
+
+    def _build_trunk_and_ref(self, idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """What: Build (x, y, c) trunk points and interleaved u/v/p ref values for given indices.
+
+        Why: Shared trunk-building logic between train sampling and full-val evaluation;
+             eliminates duplication and keeps each public method focused on index selection.
+
+        Returns:
+            trunk_pts: [len(idx)*3, 3]        — (x, y, c) rows, c cycles 0/1/2
+            ref_vals:  [num_re, len(idx)*3]   — interleaved u/v/p per Re case
+        """
+        n = len(idx)
+        grid0 = self.grids[0]
+        x_rep = np.repeat(grid0["x"][idx].astype(np.float32), 3)
+        y_rep = np.repeat(grid0["y"][idx].astype(np.float32), 3)
+        c_rep = np.tile([0, 1, 2], n).astype(np.float32)
+        trunk_pts = np.stack([x_rep, y_rep, c_rep], axis=1)
+
+        ref_list = []
+        for grid in self.grids:
+            ref = np.empty(n * 3, dtype=np.float32)
+            ref[0::3] = grid["u"][idx].astype(np.float32)
+            ref[1::3] = grid["v"][idx].astype(np.float32)
+            ref[2::3] = grid["p"][idx].astype(np.float32)
+            ref_list.append(ref)
+        return trunk_pts, np.stack(ref_list, axis=0)
 
     def sample_train_trunk(
         self, rng: np.random.Generator, n_per_re: int
     ) -> tuple[np.ndarray, np.ndarray]:
-        """What: Sample n_per_re grid points per Re from train pool; replicate for c=0,1,2.
+        """What: Sample n_per_re grid points from the shared train pool; replicate for c=0,1,2.
 
         Returns:
             trunk_pts: [n_per_re * 3, 3]  — (x, y, c) rows, c cycles 0/1/2
             ref_vals:  [num_re, n_per_re * 3]  — reference u/v/p at each point per Re
         """
-        # Sample the same spatial indices for all Re (simplifies trunk batching)
-        idx = rng.choice(self.train_indices[0], size=n_per_re, replace=False)
-        grid0 = self.grids[0]
-        x_pts = grid0["x"][idx].astype(np.float32)
-        y_pts = grid0["y"][idx].astype(np.float32)
-
-        # Replicate each point 3 times for c = 0, 1, 2
-        x_rep = np.repeat(x_pts, 3)
-        y_rep = np.repeat(y_pts, 3)
-        c_rep = np.tile([0, 1, 2], n_per_re).astype(np.float32)
-        trunk_pts = np.stack([x_rep, y_rep, c_rep], axis=1)  # [n_per_re*3, 3]
-
-        # Reference values per Re
-        ref_list = []
-        for i, grid in enumerate(self.grids):
-            u_vals = grid["u"][idx].astype(np.float32)
-            v_vals = grid["v"][idx].astype(np.float32)
-            p_vals = grid["p"][idx].astype(np.float32)
-            # Interleave: u0,v0,p0, u1,v1,p1, ...
-            ref = np.empty(n_per_re * 3, dtype=np.float32)
-            ref[0::3] = u_vals
-            ref[1::3] = v_vals
-            ref[2::3] = p_vals
-            ref_list.append(ref)
-        ref_vals = np.stack(ref_list, axis=0)  # [num_re, n_per_re*3]
-
-        return trunk_pts, ref_vals
-
-    def get_val_trunk(self) -> tuple[np.ndarray, np.ndarray]:
-        """What: Return full val set trunk and ref values for checkpoint evaluation."""
-        return self.sample_val_trunk_all()
+        idx = rng.choice(self.train_idx, size=n_per_re, replace=False)
+        return self._build_trunk_and_ref(idx)
 
     def sample_val_trunk_all(self) -> tuple[np.ndarray, np.ndarray]:
-        """What: Build trunk/ref tensors from the full val pool of Re case 0."""
-        idx = self.val_indices[0]
-        grid0 = self.grids[0]
-        x_pts = grid0["x"][idx].astype(np.float32)
-        y_pts = grid0["y"][idx].astype(np.float32)
-        x_rep = np.repeat(x_pts, 3)
-        y_rep = np.repeat(y_pts, 3)
-        c_rep = np.tile([0, 1, 2], len(idx)).astype(np.float32)
-        trunk_pts = np.stack([x_rep, y_rep, c_rep], axis=1)
-
-        ref_list = []
-        for grid in self.grids:
-            u_vals = grid["u"][idx].astype(np.float32)
-            v_vals = grid["v"][idx].astype(np.float32)
-            p_vals = grid["p"][idx].astype(np.float32)
-            ref = np.empty(len(idx) * 3, dtype=np.float32)
-            ref[0::3] = u_vals
-            ref[1::3] = v_vals
-            ref[2::3] = p_vals
-            ref_list.append(ref)
-        return trunk_pts, np.stack(ref_list, axis=0)
+        """What: Build trunk/ref tensors from the full shared val pool."""
+        return self._build_trunk_and_ref(self.val_idx)
