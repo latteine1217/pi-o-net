@@ -295,3 +295,63 @@ def test_gauge_loss_zero_at_origin():
 
     loss = compute_gauge_loss(model_fn=model_fn, device=torch.device("cpu"))
     assert loss.item() < 1e-8
+
+
+# ── Task 4 tests ─────────────────────────────────────────────────────────────
+
+def test_training_smoke(tmp_path):
+    """What: Training loop runs 3 steps without error and produces a checkpoint."""
+    import subprocess, sys
+    # Create 3 fake .mat files
+    for re in [3000, 4000, 5000]:
+        make_fake_mat(tmp_path, re)
+
+    config_text = f"""
+[train]
+data_files = [
+  "{tmp_path}/cavity_Re3000_5_Uniform.mat",
+  "{tmp_path}/cavity_Re4000_5_Uniform.mat",
+  "{tmp_path}/cavity_Re5000_5_Uniform.mat",
+]
+num_interior_sensors = 3
+num_boundary_sensors = 4
+num_trunk_points = 6
+num_physics_points = 4
+num_bc_points = 4
+branch_hidden_dims = [16, 16]
+trunk_hidden_dims = [16, 16]
+trunk_rff_features = 8
+trunk_rff_sigma = 5.0
+latent_width = 16
+use_resnet_branch = false
+data_loss_weight = 1.0
+physics_loss_weight = 0.01
+physics_continuity_weight = 1.0
+bc_loss_weight = 1.0
+gauge_loss_weight = 1.0
+iterations = 3
+batch_size = 3
+optimizer = "adamw"
+learning_rate = 0.001
+weight_decay = 0.0001
+lr_schedule = "none"
+min_learning_rate = 1e-6
+lr_step_size = 1000
+lr_step_gamma = 0.5
+checkpoint_period = 2
+seed = 42
+device = "cpu"
+artifacts_dir = "{tmp_path}/artifacts"
+"""
+    config_path = tmp_path / "test_config.toml"
+    config_path.write_text(config_text)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pi_onet.ldc_train", "--config", str(config_path)],
+        capture_output=True, text=True, timeout=60,
+        cwd="/Users/latteine/Documents/coding/pi-o-net",
+    )
+    assert result.returncode == 0, f"Training failed:\n{result.stderr}"
+    # Checkpoint should exist
+    checkpoints = list(Path(f"{tmp_path}/artifacts/checkpoints").glob("*.pt"))
+    assert len(checkpoints) > 0
