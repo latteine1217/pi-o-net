@@ -100,7 +100,10 @@ class LDCDataset:
         """What: Load all .mat files, sample sensors, build branch vectors, split data."""
         rng = np.random.default_rng(seed)
         grids = [load_ldc_mat(Path(p)) for p in mat_paths]
-        n_pts = len(grids[0]["x"])
+        # Use minimum n_pts across all cases so indices are valid for every case.
+        # Why: mat files may have inconsistent grid sizes (e.g., Re4000 is 256×256
+        #      while Re3000/Re5000 are 257×257); using min avoids out-of-bounds indexing.
+        n_pts = min(len(g["x"]) for g in grids)
         grid_size = int(round(n_pts ** 0.5))
 
         # Sensor locations (shared across all Re)
