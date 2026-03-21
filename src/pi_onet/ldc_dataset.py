@@ -12,20 +12,46 @@ from typing import Sequence
 
 import numpy as np
 import scipy.io
+import scipy.interpolate
 
 RE_MEAN: float = 4000.0
 RE_STD: float = 816.5  # population std of {3000, 4000, 5000}; update if Re set changes
 
 
+def _fill_nan_nearest(arr2d: np.ndarray) -> np.ndarray:
+    """What: Fill NaN values with nearest-neighbour interpolation on a 2-D grid.
+
+    Why: Some mat files have NaN pressure values near boundaries due to CFD solver
+         corner divergence. Nearest-neighbour filling preserves physical scale without
+         introducing artificial smoothing.
+    """
+    mask = np.isnan(arr2d)
+    if not mask.any():
+        return arr2d
+    ny, nx = arr2d.shape
+    ys, xs = np.mgrid[0:ny, 0:nx]
+    valid = ~mask
+    filled = scipy.interpolate.griddata(
+        (ys[valid], xs[valid]), arr2d[valid], (ys, xs), method="nearest"
+    )
+    return filled
+
+
 def load_ldc_mat(path: Path) -> dict[str, np.ndarray]:
-    """What: Load a single LDC .mat file; return flattened 1-D field arrays."""
+    """What: Load a single LDC .mat file; return flattened 1-D field arrays.
+
+    Why: NaN values in pressure fields (boundary artefacts) are filled with
+         nearest-neighbour interpolation before ravel so downstream code sees
+         clean float64 arrays.
+    """
     data = scipy.io.loadmat(str(path))
+    p_clean = _fill_nan_nearest(data["P_ref"].astype(np.float64))
     return {
         "x": data["X_ref"].ravel().astype(np.float64),
         "y": data["Y_ref"].ravel().astype(np.float64),
         "u": data["U_ref"].ravel().astype(np.float64),
         "v": data["V_ref"].ravel().astype(np.float64),
-        "p": data["P_ref"].ravel().astype(np.float64),
+        "p": p_clean.ravel(),
     }
 
 
