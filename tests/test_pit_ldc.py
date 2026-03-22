@@ -117,3 +117,58 @@ def test_component_scale_differentiates():
     out_p = net(sensors, 0.0, xy, torch.full((4,), 2, dtype=torch.long))
     assert not torch.allclose(out_u, out_v)
     assert not torch.allclose(out_v, out_p)
+
+
+# ── Task 2 tests ─────────────────────────────────────────────────────────────
+
+def test_physics_loss_zero_for_linear():
+    """u=y, v=0, p=0 是 steady NS 的精確解 — 殘差應接近 0。"""
+    from pi_onet.ldc_train import steady_ns_residuals
+
+    def u_fn(xy):
+        return xy[:, 1:2]                           # u = y
+
+    def v_fn(xy):
+        return torch.zeros_like(xy[:, 0:1])         # v = 0
+
+    def p_fn(xy):
+        return torch.zeros_like(xy[:, 0:1])         # p = 0
+
+    xy = torch.rand(20, 2, requires_grad=True)
+    ns_x, ns_y, cont = steady_ns_residuals(u_fn, v_fn, p_fn, xy, re=100.0)
+    # For u=y, v=0, p=0: NS_x = y·0 + 0·1 + 0 - (1/Re)·(0+0) = 0
+    #                    NS_y = 0·0 + y·0 + 0 - (1/Re)·(0+0) = 0
+    #                    cont = 0 + 0 = 0
+    assert ns_x.abs().max().item() < 1e-5
+    assert ns_y.abs().max().item() < 1e-5
+    assert cont.abs().max().item() < 1e-5
+
+
+def test_bc_loss_interface():
+    """compute_bc_loss 接受 model_fn(xy, c=int)，回傳非 NaN 非負值。"""
+    from pi_onet.ldc_train import compute_bc_loss
+
+    def zero_fn(xy, c):
+        return torch.zeros(xy.shape[0], 1)
+
+    device = torch.device("cpu")
+    loss = compute_bc_loss(model_fn=zero_fn, n_per_wall=5, device=device)
+    assert not torch.isnan(loss)
+    assert loss.item() >= 0.0
+
+
+def test_pit_model_fn_bc_gauge_compat():
+    """make_pit_model_fn 的 closure 能與 compute_bc_loss / compute_gauge_loss 介面相容。"""
+    from pi_onet.pit_ldc import make_pit_model_fn
+    from pi_onet.ldc_train import compute_bc_loss, compute_gauge_loss
+
+    net = _small_model()
+    sensors = torch.randn(N_S, 5)
+    device = torch.device("cpu")
+    model_fn = make_pit_model_fn(net, sensors, 0.0, device)
+
+    # compute_bc_loss 與 compute_gauge_loss 以 keyword c=0/1/2 呼叫 model_fn
+    bc_loss = compute_bc_loss(model_fn=model_fn, n_per_wall=5, device=device)
+    gauge_loss = compute_gauge_loss(model_fn=model_fn, device=device)
+    assert not torch.isnan(bc_loss)
+    assert not torch.isnan(gauge_loss)

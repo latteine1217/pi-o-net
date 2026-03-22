@@ -213,3 +213,98 @@ def create_pit_model(cfg: dict) -> CrossAttentionOperator:
         num_encoder_layers=int(cfg["num_encoder_layers"]),
         attn_dropout=float(cfg["attn_dropout"]),
     )
+
+
+# ── Physics utilities ─────────────────────────────────────────────────────────
+
+def make_pit_model_fn(
+    net: CrossAttentionOperator,
+    sensors_t: torch.Tensor,
+    re_norm: float,
+    device: torch.device,
+) -> Callable:
+    """What: Return a closure (xy, c) -> [N,1] for one Re case.
+
+    Why: Physics/BC/gauge losses call model_fn(xy, c=0/1/2) with keyword arg c.
+         Closure captures sensors and re_norm for a specific Re case.
+    re_norm: Python float (normalised Re value).
+
+    Note: net and sensors_t may reside on a different device than xy (e.g. when
+    deepxde sets the default device to MPS but compute_bc_loss builds CPU tensors).
+    We resolve the target device from the net's buffer B to ensure consistency.
+    """
+    net_device = next(iter(net.buffers())).device
+
+    def model_fn(xy: torch.Tensor, c: int) -> torch.Tensor:
+        src_device = xy.device
+        xy_d = xy.to(net_device)
+        out = net(
+            sensors_t, re_norm, xy_d,
+            torch.full((xy_d.shape[0],), c, dtype=torch.long, device=net_device),
+        )
+        return out.to(src_device)
+    return model_fn
+
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+DEFAULT_PIT_ARGS: dict[str, Any] = {
+    "data_files": None,
+    "num_interior_sensors": 80,
+    "num_boundary_sensors": 20,
+    "num_query_points": 2048,
+    "num_physics_points": 1024,
+    "num_bc_points": 100,
+    "d_model": 128,
+    "nhead": 4,
+    "num_encoder_layers": 2,
+    "dim_feedforward": 256,
+    "attn_dropout": 0.0,
+    "rff_features": 64,
+    "rff_sigma": 5.0,
+    "data_loss_weight": 1.0,
+    "physics_loss_weight": 0.1,
+    "physics_continuity_weight": 1.0,
+    "bc_loss_weight": 1.0,
+    "gauge_loss_weight": 1.0,
+    "iterations": 10000,
+    "batch_size": 3,  # TODO: currently unused — all Re cases processed together per step
+    "optimizer": "adamw",
+    "learning_rate": 1e-3,
+    "weight_decay": 1e-4,
+    "lr_schedule": "step",
+    "lr_step_size": 5000,
+    "lr_step_gamma": 0.5,
+    "min_learning_rate": 1e-6,
+    "max_grad_norm": 1.0,
+    "checkpoint_period": 2000,
+    "seed": 42,
+    "device": "auto",
+    "artifacts_dir": "../artifacts/pit-ldc",
+}
+
+
+def load_pit_config(config_path: Path | None) -> dict[str, Any]:
+    """What: Load and validate TOML config against DEFAULT_PIT_ARGS.
+
+    Why: Single entry point for config parsing; catches unsupported keys early
+         and resolves relative paths against the config file location.
+    """
+    if config_path is None:
+        return {}
+    payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    config_data = payload.get("train", payload)
+    normalized = dict(config_data)
+    unknown = sorted(set(normalized) - set(DEFAULT_PIT_ARGS))
+    if unknown:
+        raise ValueError(f"PiT config 含有不支援的欄位: {unknown}")
+    if "data_files" in normalized:
+        normalized["data_files"] = [
+            str((config_path.parent / Path(p)).resolve())
+            for p in normalized["data_files"]
+        ]
+    if "artifacts_dir" in normalized:
+        normalized["artifacts_dir"] = str(
+            (config_path.parent / Path(normalized["artifacts_dir"])).resolve()
+        )
+    return normalized
