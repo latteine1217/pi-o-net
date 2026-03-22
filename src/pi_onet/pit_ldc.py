@@ -298,30 +298,15 @@ def load_pit_config(config_path: Path | None) -> dict[str, Any]:
     unknown = sorted(set(normalized) - set(DEFAULT_PIT_ARGS))
     if unknown:
         raise ValueError(f"PiT config 含有不支援的欄位: {unknown}")
-    cwd = Path.cwd()
     if "data_files" in normalized:
-        resolved = []
-        for p in normalized["data_files"]:
-            pp = Path(p)
-            if pp.is_absolute():
-                resolved.append(str(pp))
-            else:
-                # Prefer cwd-relative resolution (subprocess cwd = project root);
-                # fall back to config-file-relative if cwd-relative doesn't exist.
-                cwd_candidate = (cwd / pp).resolve()
-                cfg_candidate = (config_path.parent / pp).resolve()
-                resolved.append(str(cwd_candidate if cwd_candidate.exists() else cfg_candidate))
-        normalized["data_files"] = resolved
+        normalized["data_files"] = [
+            str((config_path.parent / Path(p)).resolve())
+            for p in normalized["data_files"]
+        ]
     if "artifacts_dir" in normalized:
-        ad = Path(normalized["artifacts_dir"])
-        if ad.is_absolute():
-            normalized["artifacts_dir"] = str(ad)
-        else:
-            cwd_candidate = (cwd / ad).resolve()
-            cfg_candidate = (config_path.parent / ad).resolve()
-            normalized["artifacts_dir"] = str(
-                cwd_candidate if cwd_candidate.exists() else cfg_candidate
-            )
+        normalized["artifacts_dir"] = str(
+            (config_path.parent / Path(normalized["artifacts_dir"])).resolve()
+        )
     return normalized
 
 

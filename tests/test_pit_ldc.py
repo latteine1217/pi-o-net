@@ -184,9 +184,9 @@ def test_smoke_train(tmp_path):
     config_content = f"""
 [train]
 data_files = [
-  "data/ldc/cavity_Re3000_256_Uniform.mat",
-  "data/ldc/cavity_Re4000_256_Uniform.mat",
-  "data/ldc/cavity_Re5000_256_Uniform.mat",
+  "/Users/latteine/Documents/coding/pi-o-net/data/ldc/cavity_Re3000_256_Uniform.mat",
+  "/Users/latteine/Documents/coding/pi-o-net/data/ldc/cavity_Re4000_256_Uniform.mat",
+  "/Users/latteine/Documents/coding/pi-o-net/data/ldc/cavity_Re5000_256_Uniform.mat",
 ]
 num_interior_sensors = 10
 num_boundary_sensors = 8
