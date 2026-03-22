@@ -298,13 +298,239 @@ def load_pit_config(config_path: Path | None) -> dict[str, Any]:
     unknown = sorted(set(normalized) - set(DEFAULT_PIT_ARGS))
     if unknown:
         raise ValueError(f"PiT config 含有不支援的欄位: {unknown}")
+    cwd = Path.cwd()
     if "data_files" in normalized:
-        normalized["data_files"] = [
-            str((config_path.parent / Path(p)).resolve())
-            for p in normalized["data_files"]
-        ]
+        resolved = []
+        for p in normalized["data_files"]:
+            pp = Path(p)
+            if pp.is_absolute():
+                resolved.append(str(pp))
+            else:
+                # Prefer cwd-relative resolution (subprocess cwd = project root);
+                # fall back to config-file-relative if cwd-relative doesn't exist.
+                cwd_candidate = (cwd / pp).resolve()
+                cfg_candidate = (config_path.parent / pp).resolve()
+                resolved.append(str(cwd_candidate if cwd_candidate.exists() else cfg_candidate))
+        normalized["data_files"] = resolved
     if "artifacts_dir" in normalized:
-        normalized["artifacts_dir"] = str(
-            (config_path.parent / Path(normalized["artifacts_dir"])).resolve()
-        )
+        ad = Path(normalized["artifacts_dir"])
+        if ad.is_absolute():
+            normalized["artifacts_dir"] = str(ad)
+        else:
+            cwd_candidate = (cwd / ad).resolve()
+            cfg_candidate = (config_path.parent / ad).resolve()
+            normalized["artifacts_dir"] = str(
+                cwd_candidate if cwd_candidate.exists() else cfg_candidate
+            )
     return normalized
+
+
+# ── Training loop ─────────────────────────────────────────────────────────────
+
+def train_pit_ldc(args: dict[str, Any]) -> None:
+    """What: Full PiT LDC training loop.
+
+    Why: Pure PyTorch loop (no DeepXDE training infra) — steady-state LDC has
+         no temporal structure compatible with DeepXDE's DataSet abstraction.
+    """
+    from pi_onet.ldc_dataset import LDCDataset
+
+    device = configure_torch_runtime(args["device"])
+    torch.manual_seed(args["seed"])
+    rng = np.random.default_rng(args["seed"])
+
+    artifacts_dir = Path(args["artifacts_dir"])
+    checkpoints_dir = artifacts_dir / "checkpoints"
+    best_dir = artifacts_dir / "best_validation"
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    best_dir.mkdir(parents=True, exist_ok=True)
+
+    # Dataset
+    dataset = LDCDataset(
+        mat_paths=args["data_files"],
+        num_interior_sensors=args["num_interior_sensors"],
+        num_boundary_sensors=args["num_boundary_sensors"],
+        train_ratio=0.8,
+        seed=args["seed"],
+    )
+    num_re = len(dataset.re_values)
+
+    # Pre-assemble sensor tensors and re_norm_list (static across all steps)
+    idx = np.concatenate([dataset.sensor_interior, dataset.sensor_boundary])
+    sensors_list: list[torch.Tensor] = []
+    re_norm_list: list[float] = []
+    for i, g in enumerate(dataset.grids):
+        s = np.stack(
+            [g["x"][idx], g["y"][idx], g["u"][idx], g["v"][idx], g["p"][idx]], axis=1
+        )
+        sensors_list.append(torch.tensor(s, dtype=torch.float32, device=device))
+        re_norm_list.append(float((dataset.re_values[i] - RE_MEAN) / RE_STD))
+
+    # Model
+    net = create_pit_model(args).to(device)
+
+    print("=== Configuration ===")
+    print(json.dumps(
+        {k: v for k, v in args.items() if k != "data_files"}, indent=2, ensure_ascii=False
+    ))
+    print(f"trainable_parameters: {count_parameters(net)}")
+
+    # Optimizer
+    if args["optimizer"] == "adamw":
+        optimizer = torch.optim.AdamW(
+            net.parameters(), lr=args["learning_rate"], weight_decay=args["weight_decay"]
+        )
+    else:
+        optimizer = torch.optim.Adam(net.parameters(), lr=args["learning_rate"])
+
+    # LR scheduler
+    scheduler = None
+    if args["lr_schedule"] == "step":
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=args["lr_step_size"], gamma=args["lr_step_gamma"]
+        )
+
+    best_val_metric = float("inf")
+    best_checkpoint_path: str | None = None
+    n_bc_per_wall = max(1, args["num_bc_points"] // 4)
+
+    print("=== Training ===")
+    print(f"{'Step':<8} {'L_data':>12} {'L_phys':>12} {'L_bc':>10} {'L_total':>12}")
+
+    for step in range(1, args["iterations"] + 1):
+        net.train()
+        optimizer.zero_grad()
+
+        # ── Data loss ──
+        trunk_np, ref_np = dataset.sample_train_trunk(
+            rng=rng, n_per_re=args["num_query_points"]
+        )
+        xy_data = torch.tensor(trunk_np[:, :2], dtype=torch.float32, device=device)
+        c_data = torch.tensor(trunk_np[:, 2], dtype=torch.long, device=device)
+
+        l_data = torch.zeros(1, device=device, dtype=dde_config.real(torch))
+        for i in range(num_re):
+            pred = net(sensors_list[i], re_norm_list[i], xy_data, c_data).squeeze(1)
+            ref = torch.tensor(ref_np[i], dtype=torch.float32, device=device)
+            l_data = l_data + torch.mean((pred - ref) ** 2)
+        l_data = l_data / num_re
+
+        # ── Physics loss ──
+        xy_phys_np = rng.uniform(0.0, 1.0, (args["num_physics_points"], 2)).astype(np.float32)
+        xy_phys = torch.tensor(xy_phys_np, device=device, requires_grad=True)
+
+        # eval mode: disables attn_dropout noise for deterministic autograd gradients
+        net.eval()
+        l_ns_total = torch.zeros(1, device=device, dtype=dde_config.real(torch))
+        l_cont_total = torch.zeros(1, device=device, dtype=dde_config.real(torch))
+        for i in range(num_re):
+            model_fn_i = make_pit_model_fn(net, sensors_list[i], re_norm_list[i], device)
+            u_fn = lambda xy, fn=model_fn_i: fn(xy, c=0)
+            v_fn = lambda xy, fn=model_fn_i: fn(xy, c=1)
+            p_fn = lambda xy, fn=model_fn_i: fn(xy, c=2)
+            ns_x, ns_y, cont = steady_ns_residuals(
+                u_fn, v_fn, p_fn, xy_phys, re=dataset.re_values[i]
+            )
+            l_ns_total = l_ns_total + torch.mean(ns_x ** 2) + torch.mean(ns_y ** 2)
+            l_cont_total = l_cont_total + torch.mean(cont ** 2)
+
+        # BC and gauge: Re-independent BCs, use Re case 0
+        model_fn_re0 = make_pit_model_fn(net, sensors_list[0], re_norm_list[0], device)
+        l_bc = compute_bc_loss(model_fn=model_fn_re0, n_per_wall=n_bc_per_wall, device=device)
+        l_gauge = compute_gauge_loss(model_fn=model_fn_re0, device=device)
+        net.train()
+
+        l_ns_total = l_ns_total / num_re
+        l_cont_total = l_cont_total / num_re
+        l_physics = l_ns_total + args["physics_continuity_weight"] * l_cont_total
+
+        l_total = (
+            args["data_loss_weight"] * l_data
+            + args["physics_loss_weight"] * l_physics
+            + args["bc_loss_weight"] * l_bc
+            + args["gauge_loss_weight"] * l_gauge
+        )
+        l_total.backward()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=float(args["max_grad_norm"]))
+        optimizer.step()
+
+        if scheduler is not None:
+            scheduler.step()
+            for pg in optimizer.param_groups:
+                if pg["lr"] < args["min_learning_rate"]:
+                    pg["lr"] = args["min_learning_rate"]
+
+        if step % max(1, args["iterations"] // 10) == 0 or step == 1:
+            print(
+                f"{step:<8} {l_data.item():>12.4e} {l_physics.item():>12.4e}"
+                f" {l_bc.item():>10.4e} {l_total.item():>12.4e}"
+            )
+
+        # ── Checkpoint + validation ──
+        if args["checkpoint_period"] > 0 and step % args["checkpoint_period"] == 0:
+            ckpt_path = checkpoints_dir / f"pit_ldc_step_{step}.pt"
+            torch.save(net.state_dict(), str(ckpt_path))
+
+            trunk_pts, ref_vals = dataset.sample_val_trunk_all()
+            xy_val = torch.tensor(trunk_pts[:, :2], dtype=torch.float32, device=device)
+            c_val = torch.tensor(trunk_pts[:, 2], dtype=torch.long, device=device)
+
+            with torch.no_grad():
+                net.eval()
+                total_rel_l2 = 0.0
+                for i in range(num_re):
+                    pred_val = net(
+                        sensors_list[i], re_norm_list[i], xy_val, c_val
+                    ).squeeze(1)
+                    ref_t = torch.tensor(ref_vals[i], dtype=torch.float32, device=device)
+                    rel_l2_i = (
+                        torch.norm(pred_val - ref_t) / (torch.norm(ref_t) + 1e-8)
+                    ).item()
+                    total_rel_l2 += rel_l2_i
+                mean_rel_l2 = total_rel_l2 / num_re
+                net.train()
+
+            print(f"  [val @ {step}] mean_rel_l2 = {mean_rel_l2:.4f}")
+
+            if mean_rel_l2 < best_val_metric:
+                best_val_metric = mean_rel_l2
+                best_path = best_dir / "pit_ldc_best.pt"
+                torch.save(net.state_dict(), str(best_path))
+                best_checkpoint_path = str(best_path)
+                write_json(best_dir / "best_validation_summary.json", {
+                    "step": step, "val_mean_rel_l2": mean_rel_l2,
+                })
+
+    final_path = artifacts_dir / "pit_ldc_final.pt"
+    torch.save(net.state_dict(), str(final_path))
+    write_json(artifacts_dir / "experiment_manifest.json", {
+        "configuration": {k: v for k, v in args.items() if k != "data_files"},
+        "best_checkpoint": best_checkpoint_path,
+        "final_checkpoint": str(final_path),
+        "final_val_metric": best_val_metric,
+    })
+    print(f"=== Done. Best val rel_L2 = {best_val_metric:.4f} ===")
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    """What: Entry point for pit_ldc CLI."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Train PiT Cross-Attention Operator on steady-state LDC flow."
+    )
+    parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default=None)
+    cli_args = parser.parse_args()
+
+    config = dict(DEFAULT_PIT_ARGS)
+    config.update(load_pit_config(cli_args.config))
+    if cli_args.device is not None:
+        config["device"] = cli_args.device
+
+    train_pit_ldc(config)
+
+
+if __name__ == "__main__":
+    main()

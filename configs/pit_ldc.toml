@@ -1,0 +1,44 @@
+[train]
+data_files = [
+  "../data/ldc/cavity_Re3000_256_Uniform.mat",
+  "../data/ldc/cavity_Re4000_256_Uniform.mat",
+  "../data/ldc/cavity_Re5000_256_Uniform.mat",
+]
+num_interior_sensors = 80
+num_boundary_sensors = 20
+# num_query_points: 每步從 train pool 採樣的 query points 數
+num_query_points = 2048
+num_physics_points = 1024
+num_bc_points = 100
+
+# PiT 架構參數
+d_model = 128
+nhead = 4
+num_encoder_layers = 2
+dim_feedforward = 256
+attn_dropout = 0.0
+rff_features = 64
+rff_sigma = 5.0
+
+# Loss weights
+data_loss_weight = 1.0
+physics_loss_weight = 0.1
+physics_continuity_weight = 1.0
+bc_loss_weight = 1.0
+gauge_loss_weight = 1.0
+
+# Training
+iterations = 10000
+batch_size = 3
+optimizer = "adamw"
+learning_rate = 0.001
+weight_decay = 0.0001
+lr_schedule = "step"
+lr_step_size = 5000
+lr_step_gamma = 0.5
+min_learning_rate = 1e-6
+max_grad_norm = 1.0
+checkpoint_period = 2000
+seed = 42
+device = "auto"
+artifacts_dir = "../artifacts/pit-ldc"

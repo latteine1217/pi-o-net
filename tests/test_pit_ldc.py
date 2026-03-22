@@ -172,3 +172,48 @@ def test_pit_model_fn_bc_gauge_compat():
     gauge_loss = compute_gauge_loss(model_fn=model_fn, device=device)
     assert not torch.isnan(bc_loss)
     assert not torch.isnan(gauge_loss)
+
+
+# ── Task 3 tests ─────────────────────────────────────────────────────────────
+
+def test_smoke_train(tmp_path):
+    """3 steps of training produce a checkpoint and non-NaN losses."""
+    import subprocess
+    import sys
+
+    config_content = f"""
+[train]
+data_files = [
+  "data/ldc/cavity_Re3000_256_Uniform.mat",
+  "data/ldc/cavity_Re4000_256_Uniform.mat",
+  "data/ldc/cavity_Re5000_256_Uniform.mat",
+]
+num_interior_sensors = 10
+num_boundary_sensors = 8
+num_query_points = 16
+num_physics_points = 8
+num_bc_points = 8
+d_model = 16
+nhead = 2
+num_encoder_layers = 1
+dim_feedforward = 32
+rff_features = 8
+rff_sigma = 1.0
+iterations = 3
+checkpoint_period = 2
+seed = 0
+device = "cpu"
+artifacts_dir = "{tmp_path}/artifacts"
+"""
+    cfg_path = tmp_path / "smoke_pit.toml"
+    cfg_path.write_text(config_content)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pi_onet.pit_ldc", "--config", str(cfg_path)],
+        capture_output=True, text=True, timeout=300,
+        cwd="/Users/latteine/Documents/coding/pi-o-net",
+    )
+    assert result.returncode == 0, f"stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
+    assert "nan" not in result.stdout.lower(), f"NaN in output:\n{result.stdout}"
+    ckpts = list((tmp_path / "artifacts" / "checkpoints").glob("*.pt"))
+    assert len(ckpts) > 0, "No checkpoint saved"

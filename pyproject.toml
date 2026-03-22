@@ -20,6 +20,7 @@ dev = [
 train-kolmogorov-deeponet = "pi_onet.train:main"
 eval-kolmogorov-checkpoint = "pi_onet.evaluate_checkpoint:main"
 pi_onet_ldc_train = "pi_onet.ldc_train:main"
+pi_onet_pit_ldc_train = "pi_onet.pit_ldc:main"
 
 [build-system]
 requires = ["hatchling"]
