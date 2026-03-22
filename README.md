@@ -1,84 +1,134 @@
-# pi-o-net
+# pi-o-net — PiT LDC
 
-文獻對齊版 PI-DeepONet（對齊 arXiv:2103.10974）訓練專案。  
-目前流程固定為：
+Physics-informed Transformer (PiT) 用於多 Re 穩態 Lid-Driven Cavity (LDC) 流場預測。
 
-- Branch：`DNS sensors at t=0 + Re`
-- Trunk：`(x, y, t)` 原始可微座標
-- Loss：`L_total = λ_ic * L_IC + λ_phys * L_physics`
-- Physics：Kolmogorov vorticity equation residual（spectral 空間導數 + AD 時間導數）
-- 記憶體修復：支援 `physics_branch_batch_size`，只對 `L_physics` 做 branch micro-batch
+## 架構：PiT CrossAttentionOperator
 
-不保留舊版流程（Fourier trunk、GradNorm、自回歸單步回歸、Adam→L-BFGS 雙階段）。
+以 Cross-Attention 取代 DeepONet 的 branch-trunk 點積，讓每個查詢點只關注相關感測器。
 
-## 安裝與測試
+```
+Sensors [N_s × 5]          Query points [N_q × 2]
+(x, y, u, v, p)            (x, y) + component c ∈ {0,1,2}
+       │                            │
+  SensorEncoder               QueryEncoder
+  ─────────────               ────────────
+  RFF(x,y) → concat          RFF(x,y) shared B
+  Linear → [N_s, d_model]    Embedding(c) → concat
+  prepend re_token            Linear → Q [N_q, d_model]
+  TransformerEncoder × 2
+  → K, V [N_s+1, d_model]
+       │                            │
+       └──────── CrossAttention ────┘
+                 MHA(Q, K, V)
+                 LayerNorm
+                 Linear(d_model → 1)
+                 ComponentScaler
+                      │
+                 output [N_q, 1]
+```
+
+### 關鍵設計選擇
+
+| 元件 | 說明 |
+|------|------|
+| **RFF** | Random Fourier Features 編碼空間座標，提供豐富頻率基底 |
+| **re_token** | 可學習 Re 標記，prepend 至感測器序列，讓 attention 獲得全局 Re 資訊 |
+| **ComponentScaler** | 獨立縮放 u/v/p 輸出，解決各分量量級差異 |
+| **Shared B** | SensorEncoder 與 QueryEncoder 共享 RFF 隨機矩陣，確保座標空間一致 |
+
+### 超參數（Run 4）
+
+```toml
+d_model = 128
+nhead = 4
+num_encoder_layers = 2
+dim_feedforward = 256
+rff_features = 64
+rff_sigma = 5.0
+num_interior_sensors = 80
+num_boundary_sensors = 20
+num_query_points = 2048
+num_physics_points = 1024
+```
+
+## 訓練設定
+
+```toml
+optimizer = "adamw"
+learning_rate = 0.001
+weight_decay = 0.0001
+lr_schedule = "cosine"        # CosineAnnealingLR
+min_learning_rate = 1e-5
+iterations = 10000
+batch_size = 3                # Re cases per step
+max_grad_norm = 1.0
+```
+
+**Loss 函數：**
+
+```
+L_total = L_data + 0.1 × (L_NS_x + L_NS_y) + L_cont + L_BC + L_gauge
+```
+
+**資料：** LDC steady-state，Re ∈ {3000, 4000, 5000}，mat 格式 256×256 均勻網格。
+
+## 結果
+
+| Run | LR Schedule | Best val rel_L2 | Step |
+|-----|-------------|-----------------|------|
+| Run 3 | StepLR (×0.9 / 1k) | 0.0845 | 10k |
+| **Run 4** | **Cosine 1e-3 → 1e-5** | **0.0757** | **10k** |
+
+Run 4 相較 Run 3 改善 **10.4%**，cosine annealing 消除了 StepLR 在 step 7k 的 loss bump。
+
+### Run 4 Checkpoint 進程
+
+| Step | val rel_L2 | 備註 |
+|------|-----------|------|
+| 1,000 | 0.9496 | 初期訓練 |
+| 2,000 | 0.6897 | — |
+| 3,000 | 0.3294 | 急速下降 |
+| 4,000 | 0.2029 | — |
+| 5,000 | 0.1163 | — |
+| 6,000 | 0.1018 | — |
+| 7,000 | 0.0900 | 平滑（無 bump） |
+| 8,000 | 0.0813 | — |
+| 9,000 | 0.0772 | — |
+| 10,000 | **0.0757** | **最佳** |
+
+## 安裝
 
 ```bash
 uv sync --python 3.11
 uv run pytest
 ```
 
-## 3090 伺服器部署
-
-此 repo 不包含 `data/` 與 `artifacts/`（已加入 `.gitignore`），請在伺服器自行放置 DNS 資料到 `data/kolmogorov_dns/`。
-
-```bash
-chmod +x scripts/setup_3090.sh
-./scripts/setup_3090.sh
-```
-
-正式訓練：
-
-```bash
-uv run train-kolmogorov-deeponet --config configs/paper_aligned_step.toml
-```
-
 ## 訓練
 
-預設從 `data/kolmogorov_dns/*.npy` 讀資料；也可用 `--data-file` 指定。
-
 ```bash
-uv run train-kolmogorov-deeponet --config configs/paper_aligned_constant.toml
-uv run train-kolmogorov-deeponet --config configs/paper_aligned_step.toml
-uv run train-kolmogorov-deeponet --config configs/paper_aligned_cosine.toml
-uv run train-kolmogorov-deeponet --config configs/local_fast.toml
+uv run pit-ldc-train --config configs/pit_ldc_run4_cosine.toml
 ```
 
-三份 config 僅差在學習率調度：
+可用 configs：
 
-- `paper_aligned_constant.toml`: `lr_schedule = "none"`
-- `paper_aligned_step.toml`: `lr_schedule = "step"`
-- `paper_aligned_cosine.toml`: `lr_schedule = "cosine"`
+| 檔案 | 說明 |
+|------|------|
+| `pit_ldc.toml` | 基礎設定 |
+| `pit_ldc_run3.toml` | Run 3（StepLR） |
+| `pit_ldc_run4_cosine.toml` | Run 4（Cosine，目前最佳） |
+| `transformer_re1000.toml` | Re=1000 實驗 |
 
-## Checkpoint 重評估
+## 專案結構
 
-```bash
-uv run eval-kolmogorov-checkpoint \
-  --checkpoint artifacts/paper-aligned-step/checkpoints/kolmogorov_deeponet_step_5000-5000.pt
+```
+src/pi_onet/
+  pit_ldc.py        # PiT 模型、訓練迴圈、physics loss
+  ldc_dataset.py    # LDC .mat 載入、感測器採樣
+configs/            # TOML 訓練設定
+tests/
+  test_pit_ldc.py   # 單元測試（13 個）
+docs/
+  pit_architecture.html  # 互動式架構說明文件
 ```
 
-預設會自動讀取同一實驗目錄下的 `experiment_manifest.json`。
-
-## 重要輸出
-
-- `artifacts/*/training_summary.json`
-- `artifacts/*/evaluation_summary.json`
-- `artifacts/*/best_checkpoint_evaluation.json`
-- `artifacts/*/mid_eval_history.json`
-- `artifacts/*/best_checkpoint.pt`
-
-上述 `evaluation_summary.json` / `best_checkpoint_evaluation.json` / `mid_eval_history.json` 皆包含 `pass_fail` 欄位，規則為：
-- `validation_mean_relative_l2 < 0.2`
-- `test_mean_relative_l2 < 0.2`（僅 full evaluation）
-- `rollout.sensor_relative_l2_mean < 0.3`
-- `rollout.physics_relative_l2_mean < 0.4`
-
-## 目前模型結構（預設）
-
-- Branch MLP: `[num_sensors + 1, 512, 512, 256]`
-- Trunk MLP: `[3, 512, 512, 256]`
-- Activation: `tanh`
-- Gating: 啟用（modified gated MLP）
-- Optimizer: `AdamW`
-- Loss function: `MSE`（`L_IC` 與 `L_physics` 都是 MSE）
-- Physics micro-batch: `physics_branch_batch_size = 4`（預設 config）
+`data/` 與 `artifacts/` 不納入版本控制（`.gitignore`）。

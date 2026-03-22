@@ -123,7 +123,7 @@ def test_component_scale_differentiates():
 
 def test_physics_loss_zero_for_linear():
     """u=y, v=0, p=0 是 steady NS 的精確解 — 殘差應接近 0。"""
-    from pi_onet.ldc_train import steady_ns_residuals
+    from pi_onet.pit_ldc import steady_ns_residuals
 
     def u_fn(xy):
         return xy[:, 1:2]                           # u = y
@@ -146,7 +146,7 @@ def test_physics_loss_zero_for_linear():
 
 def test_bc_loss_interface():
     """compute_bc_loss 接受 model_fn(xy, c=int)，回傳非 NaN 非負值。"""
-    from pi_onet.ldc_train import compute_bc_loss
+    from pi_onet.pit_ldc import compute_bc_loss
 
     def zero_fn(xy, c):
         return torch.zeros(xy.shape[0], 1)
@@ -160,7 +160,7 @@ def test_bc_loss_interface():
 def test_pit_model_fn_bc_gauge_compat():
     """make_pit_model_fn 的 closure 能與 compute_bc_loss / compute_gauge_loss 介面相容。"""
     from pi_onet.pit_ldc import make_pit_model_fn
-    from pi_onet.ldc_train import compute_bc_loss, compute_gauge_loss
+    from pi_onet.pit_ldc import compute_bc_loss, compute_gauge_loss
 
     net = _small_model()
     sensors = torch.randn(N_S, 5)

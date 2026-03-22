@@ -1,0 +1,1824 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design Template — Dark / Light</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+
+<style>
+/*
+╔══════════════════════════════════════════════════════════════════╗
+║  DESIGN TEMPLATE  — two-theme system                            ║
+║                                                                  ║
+║  DARK  : Blueprint / terminal aesthetic                          ║
+║          IBM Plex Mono + IBM Plex Sans                           ║
+║          Dark navy bg · cyan / blue / purple / amber accents     ║
+║                                                                  ║
+║  LIGHT : liquid.ai / onnx-inspired                               ║
+║          Plus Jakarta Sans + DM Mono                             ║
+║          Cool off-white · muted blue / teal / violet / amber     ║
+║                                                                  ║
+║  HOW TO USE                                                      ║
+║  1. Copy this file, rename it.                                   ║
+║  2. Fill in content inside .page                                 ║
+║  3. Remove component sections you don't need                     ║
+║  4. Toggle + localStorage are already wired up                   ║
+╚══════════════════════════════════════════════════════════════════╝
+*/
+
+/* ── 1. TRANSITIONS ─────────────────────────────────────────── */
+:root { --tr: 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
+
+/* ── 2. TOKEN DEFINITIONS ───────────────────────────────────── */
+[data-theme="dark"] {
+  --bg:           #0a0c10;
+  --bg-alt:       #080a0e;
+  --surface:      #111318;
+  --surface2:     #0d0f14;
+  --border:       #1e2330;
+  --border-mid:   #252d42;
+  --border-hi:    #2e3550;
+  --accent:       #4af0c4;
+  --accent2:      #f0a24a;
+  --accent3:      #a24af0;
+  --accent4:      #4a8ff0;
+  --accent-err:   #e06060;
+  --text-hi:      #e8f0ff;
+  --text:         #c8d0e0;
+  --text-mid:     #8090b0;
+  --text-dim:     #4a5470;
+  --grid-line:    rgba(78,140,255,0.04);
+  --badge-bg:     rgba(255,255,255,0.04);
+  --badge-border: var(--border-hi);
+  --code-bg:      rgba(255,255,255,0.04);
+  --formula-bg:   rgba(255,255,255,0.02);
+  --row-div:      rgba(255,255,255,0.03);
+  --shadow:       none;
+  --shadow-sm:    none;
+  --font-head:    'IBM Plex Mono', monospace;
+  --font-body:    'IBM Plex Sans', sans-serif;
+  --font-mono:    'IBM Plex Mono', monospace;
+}
+
+[data-theme="light"] {
+  --bg:           #f5f6f8;
+  --bg-alt:       #eef0f4;
+  --surface:      #ffffff;
+  --surface2:     #f9fafb;
+  --border:       #e4e7ef;
+  --border-mid:   #d0d5e4;
+  --border-hi:    #bec5d6;
+  --accent:       #0aa87a;
+  --accent2:      #d97706;
+  --accent3:      #7c3aed;
+  --accent4:      #2563eb;
+  --accent-err:   #dc2626;
+  --text-hi:      #111827;
+  --text:         #374151;
+  --text-mid:     #6b7280;
+  --text-dim:     #9ca3b8;
+  --grid-line:    rgba(37,99,235,0.04);
+  --badge-bg:     rgba(37,99,235,0.06);
+  --badge-border: rgba(37,99,235,0.18);
+  --code-bg:      #f3f4f6;
+  --formula-bg:   rgba(37,99,235,0.03);
+  --row-div:      rgba(0,0,0,0.04);
+  --shadow:       0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-sm:    0 1px 2px rgba(0,0,0,0.06);
+  --font-head:    'Plus Jakarta Sans', sans-serif;
+  --font-body:    'Plus Jakarta Sans', sans-serif;
+  --font-mono:    'DM Mono', monospace;
+}
+
+/* ── 3. RESET ───────────────────────────────────────────────── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { transition: background var(--tr), color var(--tr); }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition: background var(--tr), color var(--tr);
+}
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none; z-index: 0;
+}
+[data-theme="light"] body::before { opacity: 0.6; }
+
+/* ── 4. LAYOUT ──────────────────────────────────────────────── */
+.page {
+  position: relative; z-index: 1;
+  max-width: 1200px; margin: 0 auto;
+  padding: 48px 32px;
+}
+
+/* ── 5. THEME TOGGLE ────────────────────────────────────────── */
+.theme-toggle {
+  position: fixed; top: 24px; right: 28px; z-index: 100;
+  cursor: pointer; background: var(--surface);
+  border: 1px solid var(--border-hi); border-radius: 24px;
+  padding: 6px 14px; display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-mid); letter-spacing: 0.05em;
+  transition: background var(--tr), border-color var(--tr), color var(--tr), box-shadow var(--tr);
+  box-shadow: var(--shadow-sm); user-select: none;
+}
+.theme-toggle:hover { border-color: var(--accent4); color: var(--text-hi); }
+.toggle-icon { font-size: 13px; transition: transform 0.4s ease; }
+[data-theme="light"] .toggle-icon { transform: rotate(180deg); }
+
+/* ── 6. HEADER ──────────────────────────────────────────────── */
+.header {
+  margin-bottom: 56px; padding-left: 20px;
+  border-left: 3px solid var(--accent);
+  transition: border-color var(--tr);
+}
+[data-theme="light"] .header {
+  border-left: none; padding-left: 0;
+  display: flex; gap: 20px; align-items: flex-start;
+}
+[data-theme="light"] .header::before {
+  content: ''; display: block; width: 4px; min-height: 60px;
+  background: linear-gradient(180deg, var(--accent4) 0%, var(--accent) 100%);
+  border-radius: 2px; flex-shrink: 0;
+}
+.header-inner { flex: 1; }
+.header-tag {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.25em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 8px; transition: color var(--tr);
+}
+[data-theme="light"] .header-tag { color: var(--accent4); font-weight: 500; }
+h1 {
+  font-family: var(--font-head); font-size: 28px; font-weight: 700;
+  color: var(--text-hi); letter-spacing: -0.02em; transition: color var(--tr);
+}
+[data-theme="light"] h1 {
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #111827 0%, #374151 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.header p { font-size: 13px; color: var(--text-mid); margin-top: 6px; transition: color var(--tr); }
+
+/* ── 7. SECTION LABEL ───────────────────────────────────────── */
+.section-label {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--text-dim); margin-bottom: 20px;
+  display: flex; align-items: center; gap: 12px;
+  transition: color var(--tr);
+}
+.section-label::after {
+  content: ''; flex: 1; height: 1px;
+  background: var(--border); transition: background var(--tr);
+}
+[data-theme="light"] .section-label { color: var(--text-mid); font-weight: 500; letter-spacing: 0.15em; }
+.diagram-section { margin-bottom: 64px; }
+
+/* ── 8. PANEL ───────────────────────────────────────────────── */
+.panel {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; padding: 40px;
+  transition: background var(--tr), border-color var(--tr), box-shadow var(--tr);
+}
+[data-theme="light"] .panel { border-radius: 12px; box-shadow: var(--shadow); }
+.panel--sm  { padding: 20px 24px; }
+.panel--flush { padding: 0; overflow: hidden; }
+
+/* ── 9. MODULE BOX ──────────────────────────────────────────── */
+.module-box {
+  border: 1px solid var(--border-hi); border-radius: 3px;
+  padding: 16px; background: var(--bg);
+  transition: background var(--tr), border-color var(--tr), box-shadow var(--tr);
+}
+[data-theme="light"] .module-box {
+  background: var(--surface); border-radius: 8px;
+  box-shadow: var(--shadow-sm); border-color: var(--border);
+}
+.mod-teal   { border-color: var(--accent);  }
+.mod-blue   { border-color: var(--accent4); }
+.mod-purple { border-color: var(--accent3); }
+.mod-amber  { border-color: var(--accent2); }
+[data-theme="light"] .mod-teal   { border-color: var(--border); border-top: 3px solid var(--accent);  }
+[data-theme="light"] .mod-blue   { border-color: var(--border); border-top: 3px solid var(--accent4); }
+[data-theme="light"] .mod-purple { border-color: var(--border); border-top: 3px solid var(--accent3); }
+[data-theme="light"] .mod-amber  { border-color: var(--border); border-top: 3px solid var(--accent2); }
+.module-tag {
+  font-family: var(--font-mono); font-size: 9px;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  margin-bottom: 8px; transition: color var(--tr);
+}
+.mod-teal .module-tag { color: var(--accent); }
+.mod-blue .module-tag { color: var(--accent4); }
+.mod-purple .module-tag { color: var(--accent3); }
+.mod-amber .module-tag { color: var(--accent2); }
+.module-title {
+  font-family: var(--font-head); font-size: 14px; font-weight: 600;
+  color: var(--text-hi); margin-bottom: 10px; transition: color var(--tr);
+}
+.module-detail {
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-dim); line-height: 1.7; transition: color var(--tr);
+}
+[data-theme="light"] .module-detail { color: var(--text-mid); }
+.shape-badge {
+  display: inline-block; background: var(--badge-bg);
+  border: 1px solid var(--badge-border); border-radius: 2px;
+  padding: 2px 7px; font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-dim); margin-top: 8px; transition: all var(--tr);
+}
+[data-theme="light"] .shape-badge { color: var(--accent4); border-radius: 4px; }
+
+/* ── 10. DETAIL CARD ────────────────────────────────────────── */
+.detail-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 3px; padding: 14px 16px; transition: all var(--tr);
+}
+[data-theme="light"] .detail-card {
+  background: var(--surface); border-radius: 8px; box-shadow: var(--shadow-sm);
+}
+.detail-card-title {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--text-dim); margin-bottom: 10px; transition: color var(--tr);
+}
+[data-theme="light"] .detail-card-title { color: var(--text-mid); font-weight: 500; }
+.detail-item {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 4px 0; border-bottom: 1px solid var(--row-div);
+  transition: border-color var(--tr);
+}
+.detail-item:last-child { border-bottom: none; }
+.dk { color: var(--text-dim); transition: color var(--tr); }
+[data-theme="light"] .dk { color: var(--text-mid); }
+.dv { color: var(--text); text-align: right; font-weight: 500; transition: color var(--tr); }
+[data-theme="light"] .dv { color: var(--text-hi); }
+.dv-teal { color: var(--accent); } .dv-blue { color: var(--accent4); }
+.dv-purple { color: var(--accent3); } .dv-amber { color: var(--accent2); }
+.dv-err { color: var(--accent-err); }
+
+/* ── 11. STAT CARD ──────────────────────────────────────────── */
+.stat-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 3px; padding: 12px 14px; transition: all var(--tr);
+}
+[data-theme="light"] .stat-card { background: var(--surface2); border-radius: 8px; box-shadow: var(--shadow-sm); }
+.stat-name {
+  font-family: var(--font-mono); font-size: 9px;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-dim); margin-bottom: 6px; transition: color var(--tr);
+}
+[data-theme="light"] .stat-name { color: var(--text-mid); font-weight: 500; }
+.stat-value { font-family: var(--font-mono); font-size: 18px; font-weight: 600; color: var(--text-hi); transition: color var(--tr); }
+.stat-unit { font-size: 11px; color: var(--text-dim); margin-left: 3px; font-weight: 400; }
+
+/* ── 12. BADGES & INLINE CODE ───────────────────────────────── */
+.ic {
+  background: var(--code-bg); border: 1px solid var(--border-hi);
+  border-radius: 2px; padding: 1px 6px;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--text);
+  transition: all var(--tr);
+}
+[data-theme="light"] .ic { color: var(--accent4); border-color: var(--border-mid); border-radius: 4px; }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 2px;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase; transition: all var(--tr);
+}
+[data-theme="light"] .badge { border-radius: 99px; }
+.badge-teal   { background: rgba(74,240,196,0.12); color: var(--accent);  border: 1px solid rgba(74,240,196,0.25); }
+.badge-blue   { background: rgba(74,143,240,0.12); color: var(--accent4); border: 1px solid rgba(74,143,240,0.25); }
+.badge-purple { background: rgba(162,74,240,0.12); color: var(--accent3); border: 1px solid rgba(162,74,240,0.25); }
+.badge-amber  { background: rgba(240,162,74,0.12); color: var(--accent2); border: 1px solid rgba(240,162,74,0.25); }
+.badge-err    { background: rgba(224,96,96,0.12);  color: var(--accent-err); border: 1px solid rgba(224,96,96,0.25); }
+[data-theme="light"] .badge-teal   { background: rgba(10,168,122,0.08);  border-color: rgba(10,168,122,0.2);  }
+[data-theme="light"] .badge-blue   { background: rgba(37,99,235,0.08);   border-color: rgba(37,99,235,0.2);   }
+[data-theme="light"] .badge-purple { background: rgba(124,58,237,0.08);  border-color: rgba(124,58,237,0.2);  }
+[data-theme="light"] .badge-amber  { background: rgba(217,119,6,0.08);   border-color: rgba(217,119,6,0.2);   }
+[data-theme="light"] .badge-err    { background: rgba(220,38,38,0.08);   border-color: rgba(220,38,38,0.2);   }
+
+/* ── 13. FORMULA BLOCK ──────────────────────────────────────── */
+.formula {
+  padding: 20px 24px; background: var(--formula-bg);
+  border: 1px solid var(--border-hi); border-radius: 3px; transition: all var(--tr);
+}
+[data-theme="light"] .formula {
+  background: linear-gradient(135deg, rgba(37,99,235,0.03) 0%, rgba(10,168,122,0.03) 100%);
+  border-radius: 8px; border-color: var(--border);
+}
+.formula-title {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--text-mid); margin-bottom: 10px;
+}
+.formula-eq { font-family: var(--font-mono); font-size: 13px; color: var(--text-hi); line-height: 2; }
+.eq-dim { color: var(--text-dim); font-size: 11px; }
+.eq-teal { color: var(--accent); } .eq-blue { color: var(--accent4); }
+.eq-purple { color: var(--accent3); } .eq-amber { color: var(--accent2); }
+
+/* ── 14. STEP COLUMNS ───────────────────────────────────────── */
+.step-col-title {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  margin-bottom: 16px; transition: color var(--tr), border-color var(--tr);
+}
+.col-teal .step-col-title { color: var(--accent); }
+.col-blue .step-col-title { color: var(--accent4); }
+.col-purple .step-col-title { color: var(--accent3); }
+.col-amber .step-col-title { color: var(--accent2); }
+.flow-step { display: flex; gap: 10px; margin-bottom: 14px; }
+.step-num {
+  width: 20px; height: 20px; min-width: 20px;
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+  margin-top: 2px; transition: all var(--tr);
+}
+.col-teal   .step-num { background: rgba(74,240,196,0.12); color: var(--accent);  border: 1px solid rgba(74,240,196,0.3); }
+.col-blue   .step-num { background: rgba(74,143,240,0.15); color: var(--accent4); border: 1px solid rgba(74,143,240,0.3); }
+.col-purple .step-num { background: rgba(162,74,240,0.12); color: var(--accent3); border: 1px solid rgba(162,74,240,0.3); }
+.col-amber  .step-num { background: rgba(240,162,74,0.12); color: var(--accent2); border: 1px solid rgba(240,162,74,0.3); }
+[data-theme="light"] .col-teal   .step-num { background: rgba(10,168,122,0.08);  border-color: rgba(10,168,122,0.22); }
+[data-theme="light"] .col-blue   .step-num { background: rgba(37,99,235,0.08);   border-color: rgba(37,99,235,0.22);  }
+[data-theme="light"] .col-purple .step-num { background: rgba(124,58,237,0.08);  border-color: rgba(124,58,237,0.22); }
+[data-theme="light"] .col-amber  .step-num { background: rgba(217,119,6,0.08);   border-color: rgba(217,119,6,0.22);  }
+.step-title { font-family: var(--font-head); font-size: 12px; font-weight: 600; color: var(--text-hi); margin-bottom: 3px; transition: color var(--tr); }
+.step-desc  { font-family: var(--font-body); font-size: 11px; color: var(--text-dim); line-height: 1.6; transition: color var(--tr); }
+[data-theme="light"] .step-desc { color: var(--text-mid); }
+.step-code {
+  display: inline-block; background: var(--code-bg);
+  border: 1px solid var(--border-hi); border-radius: 2px;
+  padding: 1px 5px; font-family: var(--font-mono); font-size: 9.5px;
+  color: var(--text); margin-top: 4px; transition: all var(--tr);
+}
+[data-theme="light"] .step-code { border-color: var(--border-mid); color: var(--accent4); border-radius: 4px; }
+
+/* ── 15. INPUT BOX ──────────────────────────────────────────── */
+.input-box {
+  border: 1px dashed var(--border-hi); border-radius: 3px;
+  padding: 10px 14px; background: rgba(255,255,255,0.01); transition: all var(--tr);
+}
+[data-theme="light"] .input-box {
+  background: var(--surface2); border-style: dashed;
+  border-color: var(--border-mid); border-radius: 6px;
+}
+.input-name { font-family: var(--font-mono); font-size: 11px; color: var(--text); margin-bottom: 3px; font-weight: 500; }
+[data-theme="light"] .input-name { color: var(--text-hi); }
+.input-shape { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+[data-theme="light"] .input-shape { color: var(--text-mid); }
+
+/* ── 16. FOOTER ─────────────────────────────────────────────── */
+.footer {
+  margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between;
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-dim); letter-spacing: 0.08em; transition: all var(--tr);
+}
+
+/* ── 17. GRID & SPACING HELPERS ─────────────────────────────── */
+.grid-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
+.grid-5 { display: grid; grid-template-columns: repeat(5,1fr); gap: 12px; }
+.flex-row { display: flex; align-items: center; gap: 16px; }
+.flex-col { display: flex; flex-direction: column; gap: 12px; }
+.mt-sm { margin-top: 16px; } .mt-md { margin-top: 28px; } .mt-lg { margin-top: 48px; }
+.mb-sm { margin-bottom: 12px; } .mb-md { margin-bottom: 28px; }
+
+/* ── 18. TEXT UTILITIES ─────────────────────────────────────── */
+.t-hi { color: var(--text-hi); } .t-mid { color: var(--text-mid); } .t-dim { color: var(--text-dim); }
+.t-teal { color: var(--accent); } .t-blue { color: var(--accent4); }
+.t-purple { color: var(--accent3); } .t-amber { color: var(--accent2); }
+.t-err { color: var(--accent-err); }
+.mono { font-family: var(--font-mono); } .small { font-size: 11px; } .xs { font-size: 10px; }
+
+/* ══════════════════════════════════════════════════════════════
+   NEW COMPONENTS (07-12)
+══════════════════════════════════════════════════════════════ */
+
+/* ── 19. SVG CHART ──────────────────────────────────────────── */
+/*
+  USAGE:
+    <div class="chart-wrap">
+      <div class="chart-header">
+        <div><div class="chart-title">Title</div><div class="chart-sub">subtitle</div></div>
+        <span class="badge badge-blue">tag</span>
+      </div>
+      <svg class="chart-svg" viewBox="0 0 380 210">...</svg>
+      <div class="chart-legend">...</div>
+    </div>
+
+  SVG CSS classes for theme-aware strokes:
+    .sv-axis  .sv-grid  .sv-label
+    .sv-teal  .sv-blue  .sv-purple  .sv-amber  .sv-err
+    .sv-area-teal  .sv-area-blue  (filled regions)
+    .sv-dot-teal   .sv-dot-blue   (filled circles)
+    .sv-tick   .sv-tick-label
+*/
+.chart-wrap {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 3px; padding: 20px 20px 16px;
+  flex: 1; min-width: 0; transition: all var(--tr);
+}
+[data-theme="light"] .chart-wrap {
+  background: var(--surface); border-radius: 10px; box-shadow: var(--shadow-sm);
+}
+.chart-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 16px;
+}
+.chart-title {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+  color: var(--text-hi); margin-bottom: 3px; transition: color var(--tr);
+}
+.chart-sub {
+  font-family: var(--font-mono); font-size: 9px;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-dim); transition: color var(--tr);
+}
+.chart-svg { width: 100%; overflow: visible; display: block; }
+.chart-legend {
+  display: flex; gap: 16px; margin-top: 10px; flex-wrap: wrap;
+}
+.legend-item {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-dim);
+}
+.legend-line {
+  width: 18px; height: 2px; border-radius: 1px; flex-shrink: 0;
+}
+.legend-line-teal   { background: var(--accent);  }
+.legend-line-blue   { background: var(--accent4); }
+.legend-line-purple { background: var(--accent3); }
+.legend-line-amber  { background: var(--accent2); }
+
+/* SVG element classes */
+.sv-axis  { stroke: var(--border-hi);  stroke-width: 1; fill: none; }
+.sv-grid  { stroke: var(--border);     stroke-width: 0.5; fill: none; stroke-dasharray: 3 3; }
+.sv-label { fill: var(--text-dim);     font-family: var(--font-mono); font-size: 9px; }
+.sv-tick  { stroke: var(--border-hi);  stroke-width: 1; fill: none; }
+
+.sv-teal   { stroke: var(--accent);  stroke-width: 2; fill: none; }
+.sv-blue   { stroke: var(--accent4); stroke-width: 2; fill: none; }
+.sv-purple { stroke: var(--accent3); stroke-width: 2; fill: none; }
+.sv-amber  { stroke: var(--accent2); stroke-width: 2; fill: none; }
+.sv-err    { stroke: var(--accent-err); stroke-width: 2; fill: none; }
+
+.sv-area-teal { fill: var(--accent);  opacity: 0.08; stroke: none; }
+.sv-area-blue { fill: var(--accent4); opacity: 0.08; stroke: none; }
+
+.sv-dot-teal   { fill: var(--accent);      stroke: var(--surface); stroke-width: 1.5; }
+.sv-dot-blue   { fill: var(--accent4);     stroke: var(--surface); stroke-width: 1.5; }
+.sv-dot-purple { fill: var(--accent3);     stroke: var(--surface); stroke-width: 1.5; }
+.sv-dot-amber  { fill: var(--accent2);     stroke: var(--surface); stroke-width: 1.5; }
+
+.sv-anno-line  { stroke: var(--text-dim); stroke-width: 1; fill: none; stroke-dasharray: 4 3; }
+.sv-anno-fill  { fill: var(--text-mid);   stroke: none; }
+.sv-anno-label { fill: var(--text-mid);   font-family: var(--font-mono); font-size: 9.5px; }
+
+/* ── 20. HEATMAP ────────────────────────────────────────────── */
+/*
+  USAGE:
+    <div class="heatmap-wrap">
+      <div class="heatmap-yaxis">...</div>
+      <div class="heatmap-inner">
+        <svg id="my-heatmap" class="heatmap-svg" viewBox="0 0 400 200"></svg>
+        <div class="heatmap-xaxis">...</div>
+      </div>
+      <div class="heatmap-colorbar">
+        <div class="cb-track"></div>
+        <div class="cb-labels"><span>0</span><span>1</span></div>
+      </div>
+    </div>
+    Call: generateHeatmap('my-heatmap', dataFn, {w:24, h:24})
+    dataFn(x,y) should return value in [0,1]
+*/
+.heatmap-wrap {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 4px 0;
+}
+.heatmap-yaxis {
+  display: flex; flex-direction: column;
+  justify-content: space-between; align-items: flex-end;
+  font-family: var(--font-mono); font-size: 9px;
+  color: var(--text-dim); padding: 0 6px 18px 0;
+  min-width: 30px; height: 200px;
+}
+.heatmap-inner { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.heatmap-svg { width: 100%; max-width: 400px; display: block; border-radius: 3px; overflow: hidden; }
+[data-theme="light"] .heatmap-svg { border-radius: 6px; box-shadow: var(--shadow-sm); }
+.heatmap-xaxis {
+  display: flex; justify-content: space-between;
+  font-family: var(--font-mono); font-size: 9px; color: var(--text-dim);
+  padding: 4px 2px 0;
+}
+.heatmap-colorbar { display: flex; flex-direction: column; gap: 6px; align-items: center; padding-top: 4px; }
+.cb-track {
+  width: 10px; height: 188px; border-radius: 3px;
+  background: linear-gradient(180deg,
+    var(--accent4) 0%, var(--accent) 40%,
+    rgba(255,255,255,0.08) 100%);
+  transition: all var(--tr);
+}
+[data-theme="light"] .cb-track {
+  background: linear-gradient(180deg, #2563eb 0%, #0aa87a 50%, #e8f0ff 100%);
+}
+.cb-labels {
+  display: flex; flex-direction: column;
+  justify-content: space-between; align-items: center;
+  font-family: var(--font-mono); font-size: 8.5px;
+  color: var(--text-dim); height: 188px;
+}
+
+/* ── 21. COMPARISON TABLE ───────────────────────────────────── */
+/*
+  USAGE:
+    <div class="comp-table-wrap">
+      <table class="comp-table">
+        <thead><tr>
+          <th>Metric</th>
+          <th>Run A</th>
+          <th>Run B</th>
+          <th>Δ</th>
+        </tr></thead>
+        <tbody>
+          <tr><td>val@4k</td><td class="worse">0.935</td><td class="better">0.278</td><td class="delta-good">↓66%</td></tr>
+        </tbody>
+      </table>
+    </div>
+*/
+.comp-table-wrap { overflow-x: auto; border-radius: 3px; transition: all var(--tr); }
+[data-theme="light"] .comp-table-wrap { border-radius: 8px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); }
+.comp-table {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--surface); transition: background var(--tr);
+}
+.comp-table thead th {
+  padding: 10px 16px; text-align: left;
+  font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--text-dim); font-weight: 600;
+  border-bottom: 1px solid var(--border-mid);
+  background: var(--surface2); transition: all var(--tr);
+}
+.comp-table thead th:first-child { color: var(--text-mid); }
+[data-theme="light"] .comp-table thead th { background: var(--surface2); }
+.comp-table tbody td {
+  padding: 9px 16px; border-bottom: 1px solid var(--row-div);
+  color: var(--text); transition: color var(--tr), background var(--tr), border-color var(--tr);
+}
+.comp-table tbody tr:last-child td { border-bottom: none; }
+.comp-table tbody td:first-child { color: var(--text-mid); }
+.comp-table tbody tr:hover td { background: var(--formula-bg); }
+
+.better     { color: var(--accent) !important; font-weight: 600; }
+.worse      { color: var(--text-dim) !important; }
+.delta-good { color: var(--accent) !important; font-weight: 600; }
+.delta-bad  { color: var(--accent-err) !important; }
+.neutral    { color: var(--text-mid) !important; }
+
+[data-theme="light"] .better { color: var(--accent) !important; }
+[data-theme="light"] .worse  { color: var(--text-dim) !important; }
+
+/* ── 22. STEP TIMELINE ──────────────────────────────────────── */
+/*
+  USAGE:
+    <div class="timeline-wrap">
+      <svg class="timeline-svg" viewBox="0 0 700 160">
+        <!-- track -->
+        <line class="sv-axis" x1="60" y1="80" x2="640" y2="80"/>
+        <!-- nodes: use .tl-node-* classes, add circles + labels manually -->
+      </svg>
+    </div>
+    Timeline node convention:
+      - <circle class="tl-node-blue"> at checkpoint
+      - <text class="sv-label"> for step label below
+      - <text class="tl-val"> for metric above
+      - <rect class="tl-event"> for special events (lr decay, etc.)
+*/
+.timeline-wrap { padding: 4px 0; overflow-x: auto; }
+.timeline-svg { width: 100%; min-width: 500px; display: block; }
+
+.tl-node-teal   { fill: var(--accent);      stroke: var(--surface); stroke-width: 2; }
+.tl-node-blue   { fill: var(--accent4);     stroke: var(--surface); stroke-width: 2; }
+.tl-node-purple { fill: var(--accent3);     stroke: var(--surface); stroke-width: 2; }
+.tl-node-amber  { fill: var(--accent2);     stroke: var(--surface); stroke-width: 2; }
+.tl-node-dim    { fill: var(--border-hi);   stroke: var(--surface); stroke-width: 2; }
+.tl-node-err    { fill: var(--accent-err);  stroke: var(--surface); stroke-width: 2; }
+.tl-val   { fill: var(--text-hi); font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; }
+.tl-label { fill: var(--text-dim); font-family: var(--font-mono); font-size: 9px; }
+.tl-event { fill: var(--accent2); opacity: 0.15; rx: 2; }
+.tl-event-label { fill: var(--accent2); font-family: var(--font-mono); font-size: 8.5px; }
+.tl-run-label { fill: var(--text-dim); font-family: var(--font-mono); font-size: 9px; font-weight: 500; letter-spacing: 0.05em; }
+
+/* ── 23. CODE BLOCK ─────────────────────────────────────────── */
+/*
+  USAGE:
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-lang-label">python</span>
+        <span class="code-filename">src/pi_onet/pit_ldc.py</span>
+      </div>
+      <pre class="code-body"><code>
+        <div class="code-line"><span class="ln">1</span><span>...</span></div>
+      </code></pre>
+    </div>
+
+  Token classes:
+    .tkw  keyword (def, return, import, class)
+    .tkf  function name
+    .tks  string literal
+    .tkn  numeric literal
+    .tkc  comment
+    .tka  argument / variable
+    .tkt  type annotation
+*/
+.code-block {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 3px; overflow: hidden; transition: all var(--tr);
+}
+[data-theme="light"] .code-block { border-radius: 8px; box-shadow: var(--shadow-sm); }
+.code-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface); transition: all var(--tr);
+}
+[data-theme="light"] .code-header { background: var(--surface2); }
+.code-lang-label {
+  font-family: var(--font-mono); font-size: 9px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--accent4); font-weight: 600;
+}
+.code-filename { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+pre.code-body {
+  padding: 12px 0; overflow-x: auto; margin: 0;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.75;
+}
+.code-line { display: flex; padding: 0 16px 0 0; }
+.code-line:hover { background: var(--formula-bg); }
+.ln {
+  display: inline-block; width: 38px; padding: 0 12px 0 8px;
+  text-align: right; color: var(--text-dim); user-select: none;
+  flex-shrink: 0; font-size: 11px; transition: color var(--tr);
+}
+/* Syntax tokens */
+.tkw  { color: var(--accent3); }
+.tkf  { color: var(--accent4); }
+.tks  { color: var(--accent2); }
+.tkn  { color: var(--accent); }
+.tkc  { color: var(--text-dim); font-style: italic; }
+.tka  { color: var(--text); }
+.tkt  { color: var(--accent2); }
+[data-theme="light"] .tkw { color: var(--accent3); }
+[data-theme="light"] .tkf { color: var(--accent4); }
+[data-theme="light"] .tks { color: var(--accent2); }
+[data-theme="light"] .tkn { color: var(--accent);  }
+[data-theme="light"] .tkc { color: var(--text-dim); }
+[data-theme="light"] .tka { color: var(--text-hi); }
+
+/* ── 24. ANNOTATION DIAGRAM ─────────────────────────────────── */
+/*
+  USAGE: SVG overlay on top of a diagram wrapper
+    <div class="anno-diagram" style="position:relative">
+      <!-- content boxes here -->
+      <svg class="anno-svg" viewBox="0 0 W H" style="position:absolute;inset:0;pointer-events:none">
+        <!-- curved arrows + labels using .sv-anno-* classes -->
+      </svg>
+    </div>
+  Or standalone SVG annotation diagram (see section 12 example).
+  See section 13 for the text-based anno-strip alternative (no SVG needed).
+*/
+.anno-diagram { position: relative; }
+.anno-svg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; overflow: visible;
+}
+
+/* ── 25. ANNOTATION STRIP ───────────────────────────────────── */
+/*
+  USAGE: Append inside .panel after diagrams to call out key design decisions.
+    <div class="anno-strip">
+      <div class="anno-item">
+        <div class="anno-marker">Label</div>
+        <div class="anno-desc">Explanation text goes here.</div>
+      </div>
+    </div>
+
+  Variants:
+    .anno-strip               — default 3-column purple accent
+    .anno-strip.anno-blue     — blue accent
+    .anno-strip.anno-teal     — teal accent
+    .anno-strip.anno-amber    — amber accent
+
+  Grid: default 3 cols. Change with grid-template-columns inline if needed.
+*/
+.anno-strip {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+  margin-top: 28px; padding-top: 22px;
+  border-top: 1px dashed var(--border-mid);
+  transition: border-color var(--tr);
+}
+.anno-strip.anno-2col { grid-template-columns: repeat(2, 1fr); }
+.anno-strip.anno-4col { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 680px) { .anno-strip { grid-template-columns: 1fr; } }
+
+.anno-item { display: flex; flex-direction: column; gap: 5px; }
+.anno-marker {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--accent3); letter-spacing: 0.05em; font-weight: 600;
+  transition: color var(--tr);
+}
+.anno-marker::before {
+  content: ''; display: inline-block; width: 20px; height: 1px;
+  background: var(--accent3); flex-shrink: 0; transition: background var(--tr);
+}
+/* colour variants */
+.anno-blue  .anno-marker, .anno-blue  .anno-marker::before { color: var(--accent4); background: var(--accent4); }
+.anno-teal  .anno-marker, .anno-teal  .anno-marker::before { color: var(--accent);  background: var(--accent);  }
+.anno-amber .anno-marker, .anno-amber .anno-marker::before { color: var(--accent2); background: var(--accent2); }
+.anno-desc {
+  font-family: var(--font-body); font-size: 10.5px;
+  color: var(--text-dim); line-height: 1.6; padding-left: 28px;
+  transition: color var(--tr);
+}
+[data-theme="light"] .anno-desc { color: var(--text-mid); }
+
+/* ── 26. SENSOR DOMAIN MAP ──────────────────────────────────── */
+/*
+  USAGE: SVG diagram showing sensor placement on a physical domain [0,1]².
+    <div class="sensor-map-wrap">
+      <svg viewBox="0 0 220 220" id="sensor-map-svg">
+        <rect x="10" y="10" width="200" height="200" class="sv-domain"/>
+        <!-- lid (moving wall) highlight -->
+        <line x1="10" y1="10" x2="210" y2="10" class="sv-lid-line"/>
+        <!-- boundary sensors: pre-positioned SVG circles -->
+        <circle cx="..." cy="..." r="3" class="sv-bnd"/>        -- static/no-slip walls
+        <circle cx="..." cy="..." r="3" class="sv-bnd-lid"/>    -- moving lid
+        <!-- interior sensors: generated by drawSensorMap(id, n, seed) -->
+        <g id="interior-sensors"></g>
+        <!-- labels -->
+        <text ... class="sv-label">...</text>
+      </svg>
+    </div>
+    JS call: drawSensorMap('interior-sensors', 80, 42)
+    Domain map:  svgX = 10 + x*200,  svgY = 10 + (1−y)*200
+
+  Sensor CSS classes:
+    .sv-domain     — domain border
+    .sv-lid-line   — moving-wall highlight (amber, thicker)
+    .sv-int        — interior sensors (blue fill)
+    .sv-bnd        — boundary sensors, static walls (amber fill)
+    .sv-bnd-lid    — boundary sensors, lid (teal fill)
+*/
+.sensor-map-wrap { width: 100%; }
+.sensor-map-wrap svg { width: 100%; height: auto; display: block; }
+.sv-domain   { fill: none; stroke: var(--border-hi); stroke-width: 1.5; transition: stroke var(--tr); }
+.sv-lid-line { stroke: var(--accent2); stroke-width: 2.5; }
+.sv-int      { fill: var(--accent4); opacity: 0.75; transition: fill var(--tr), opacity var(--tr); }
+.sv-bnd      { fill: var(--accent2); transition: fill var(--tr); }
+.sv-bnd-lid  { fill: var(--accent);  transition: fill var(--tr); }
+[data-theme="light"] .sv-int { opacity: 0.85; }
+
+/* ── 27. CHART PAIR LAYOUT ──────────────────────────────────── */
+/*
+  USAGE: Two side-by-side chart boxes inside a panel.
+    <div class="chart-pair">
+      <div class="chart-box"> ... </div>
+      <div class="chart-box"> ... </div>
+    </div>
+  For a single full-width chart, just use .chart-box directly.
+  .chart-box is a self-contained panel (bg + border + padding).
+  Use .chart-box-title for the sub-heading inside.
+*/
+.chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 720px) { .chart-pair { grid-template-columns: 1fr; } }
+.chart-box {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 3px; padding: 18px; transition: all var(--tr);
+}
+[data-theme="light"] .chart-box {
+  background: var(--surface); border-radius: 10px; box-shadow: var(--shadow-sm);
+}
+.chart-box svg { width: 100%; height: auto; display: block; }
+.chart-box-title {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px;
+  transition: color var(--tr);
+}
+[data-theme="light"] .chart-box-title { color: var(--text-mid); font-weight: 500; }
+
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+  <span class="toggle-icon">◑</span>
+  <span id="toggle-label">light</span>
+</button>
+
+<div class="page">
+
+  <!-- ══ HEADER ═══════════════════════════════════════════════ -->
+  <div class="header">
+    <div class="header-inner">
+      <div class="header-tag">Design Template — Component Reference</div>
+      <h1>Dark / Light Theme System</h1>
+      <p>Blueprint dark · liquid.ai light &nbsp;·&nbsp; Copy, adapt, build.</p>
+    </div>
+  </div>
+
+  <!-- ══ 01. COLOUR TOKENS ═════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">01 &nbsp; Colour Tokens</div>
+    <div class="panel">
+      <div class="grid-5 mb-sm">
+        <div class="stat-card"><div class="stat-name">--accent (teal)</div><div class="stat-value t-teal" style="font-size:14px">4af0c4</div></div>
+        <div class="stat-card"><div class="stat-name">--accent4 (blue)</div><div class="stat-value t-blue" style="font-size:14px">4a8ff0</div></div>
+        <div class="stat-card"><div class="stat-name">--accent3 (purple)</div><div class="stat-value t-purple" style="font-size:14px">a24af0</div></div>
+        <div class="stat-card"><div class="stat-name">--accent2 (amber)</div><div class="stat-value t-amber" style="font-size:14px">f0a24a</div></div>
+        <div class="stat-card"><div class="stat-name">--accent-err (red)</div><div class="stat-value t-err" style="font-size:14px">e06060</div></div>
+      </div>
+      <div class="grid-4">
+        <div class="stat-card"><div class="stat-name">--text-hi</div><div class="stat-value t-hi" style="font-size:14px">e8f0ff</div></div>
+        <div class="stat-card"><div class="stat-name">--text</div><div class="stat-value" style="font-size:14px">c8d0e0</div></div>
+        <div class="stat-card"><div class="stat-name">--text-mid</div><div class="stat-value t-mid" style="font-size:14px">8090b0</div></div>
+        <div class="stat-card"><div class="stat-name">--text-dim</div><div class="stat-value t-dim" style="font-size:14px">4a5470</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 02. BADGES & CODE ════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">02 &nbsp; Badges &amp; Inline Code</div>
+    <div class="panel panel--sm">
+      <div class="flex-row mb-sm" style="flex-wrap:wrap; gap:8px;">
+        <span class="badge badge-teal">active</span>
+        <span class="badge badge-blue">info</span>
+        <span class="badge badge-purple">new</span>
+        <span class="badge badge-amber">warn</span>
+        <span class="badge badge-err">error</span>
+      </div>
+      <div class="flex-row" style="flex-wrap:wrap; gap:8px;">
+        <code class="ic">sensor_encoder(x)</code>
+        <code class="ic">register_buffer("B", ...)</code>
+        <code class="ic">nn.Parameter(torch.ones(3))</code>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 03. MODULE BOXES ══════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">03 &nbsp; Module Boxes</div>
+    <div class="panel">
+      <div class="grid-4">
+        <div class="module-box mod-blue">
+          <div class="module-tag">encoder 1</div>
+          <div class="module-title">SensorEncoder</div>
+          <div class="module-detail">RFF(x,y) → concat → proj<br>TransformerEncoder ×2</div>
+          <div class="shape-badge">[N_s+1, 128]</div>
+        </div>
+        <div class="module-box mod-purple">
+          <div class="module-tag">encoder 2</div>
+          <div class="module-title">QueryEncoder</div>
+          <div class="module-detail">RFF(x,y) + Embed(c,8)<br>→ Linear → d</div>
+          <div class="shape-badge">[N_q, 128]</div>
+        </div>
+        <div class="module-box mod-teal">
+          <div class="module-tag">operator</div>
+          <div class="module-title">CrossAttention</div>
+          <div class="module-detail">MHA(d=128, h=4)<br>LayerNorm → Linear</div>
+          <div class="shape-badge">[N_q, 1]</div>
+        </div>
+        <div class="module-box mod-amber">
+          <div class="module-tag">output</div>
+          <div class="module-title">Field Value</div>
+          <div class="module-detail">u, v, or p<br>at query point</div>
+          <div class="shape-badge">[N_q, 1]</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 04. DETAIL CARDS ═════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">04 &nbsp; Detail Cards</div>
+    <div class="panel">
+      <div class="grid-3">
+        <div class="detail-card">
+          <div class="detail-card-title">Model Config</div>
+          <div class="detail-item"><span class="dk">d_model</span><span class="dv dv-teal">128</span></div>
+          <div class="detail-item"><span class="dk">nhead</span><span class="dv">4</span></div>
+          <div class="detail-item"><span class="dk">encoder_layers</span><span class="dv">2</span></div>
+          <div class="detail-item"><span class="dk">total params</span><span class="dv dv-amber">366,111</span></div>
+        </div>
+        <div class="detail-card">
+          <div class="detail-card-title">Train Split</div>
+          <div class="detail-item"><span class="dk">train ratio</span><span class="dv">80%</span></div>
+          <div class="detail-item"><span class="dk">train pool</span><span class="dv dv-blue">52,428 pts</span></div>
+          <div class="detail-item"><span class="dk">val pool</span><span class="dv">13,108 pts</span></div>
+          <div class="detail-item"><span class="dk">trainable</span><span class="dv dv-err">frozen B</span></div>
+        </div>
+        <div class="detail-card">
+          <div class="detail-card-title">Results</div>
+          <div class="detail-item"><span class="dk">Run 1 @10k</span><span class="dv">0.234</span></div>
+          <div class="detail-item"><span class="dk">Run 2 @4k</span><span class="dv dv-teal">0.278</span></div>
+          <div class="detail-item"><span class="dk">device</span><span class="dv">MPS</span></div>
+          <div class="detail-item"><span class="dk">status</span><span class="dv dv-purple">training</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 05. STEP COLUMNS ══════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">05 &nbsp; Step Columns + Formula + Stats</div>
+    <div class="panel">
+      <div class="grid-3">
+        <div class="step-col col-blue">
+          <div class="step-col-title">Data Loss L_data</div>
+          <div class="flow-step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <div class="step-title">Sample query points</div>
+              <div class="step-desc">從 train pool 隨機抽取</div>
+              <code class="step-code">n = 2048 pts</code>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <div class="step-title">Forward × 3 Re</div>
+              <div class="step-desc">Re3000, 4000, 5000</div>
+            </div>
+          </div>
+        </div>
+        <div class="step-col col-teal">
+          <div class="step-col-title">Physics Loss L_phys</div>
+          <div class="flow-step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <div class="step-title">Collocation points</div>
+              <div class="step-desc">uniform in [0,1]²</div>
+              <code class="step-code">xy × 1024</code>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <div class="step-title">NS residuals</div>
+              <div class="step-desc">∂u/∂x via autograd</div>
+            </div>
+          </div>
+        </div>
+        <div class="step-col col-amber">
+          <div class="step-col-title">Optimization</div>
+          <div class="flow-step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <div class="step-title">Weighted total loss</div>
+              <div class="step-desc">4 損失加權合併</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <div class="step-title">AdamW + StepLR</div>
+              <div class="step-desc">lr × 0.9 / 1000 steps</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="formula mt-md">
+        <div class="formula-title">Combined Objective</div>
+        <div class="formula-eq">
+          L = <span class="eq-dim">w_d·</span><span class="eq-blue">L_data</span>
+          + <span class="eq-dim">w_p·</span><span class="eq-teal">L_phys</span>
+          + <span class="eq-dim">w_bc·</span><span class="eq-amber">L_bc</span>
+          + <span class="eq-dim">w_g·</span><span class="eq-purple">L_gauge</span>
+          <span class="eq-dim" style="font-size:11px;">&nbsp;&nbsp;w = 1.0 / 0.1 / 1.0 / 1.0</span>
+        </div>
+      </div>
+      <div class="grid-5 mt-md">
+        <div class="stat-card"><div class="stat-name">Iterations</div><div class="stat-value">10,000</div></div>
+        <div class="stat-card"><div class="stat-name">Query pts</div><div class="stat-value">2,048</div></div>
+        <div class="stat-card"><div class="stat-name">Physics pts</div><div class="stat-value">1,024</div></div>
+        <div class="stat-card"><div class="stat-name">LR init</div><div class="stat-value">1e-3</div></div>
+        <div class="stat-card"><div class="stat-name">Schedule</div><div class="stat-value">×0.9<span class="stat-unit">/1k</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 06. INPUT BOXES ═══════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">06 &nbsp; Input Boxes (dashed)</div>
+    <div class="panel">
+      <div class="flex-col" style="max-width:280px;">
+        <div class="input-box">
+          <div class="input-name">sensors</div>
+          <div class="input-shape">[N_s, 5] &nbsp; (x, y, u, v, p)</div>
+        </div>
+        <div class="input-box">
+          <div class="input-name">re_norm</div>
+          <div class="input-shape">float &nbsp; (Re−4000)/816</div>
+        </div>
+        <div class="input-box">
+          <div class="input-name">xy &nbsp; (query pts)</div>
+          <div class="input-shape">[N_q, 2]</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 07. XY LINE PLOT ══════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">07 &nbsp; XY Line Plot (SVG)</div>
+    <div class="panel">
+      <div class="flex-row" style="align-items:flex-start; gap:24px; flex-wrap:wrap;">
+
+        <!-- Chart A: LR Scheduler -->
+        <div class="chart-wrap">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Learning Rate Scheduler</div>
+              <div class="chart-sub">StepLR · ×0.9 every 1000 steps</div>
+            </div>
+            <span class="badge badge-blue">Run 2</span>
+          </div>
+          <!-- viewBox: 380×210, plot area x=[50,360] y=[20,170] -->
+          <svg class="chart-svg" viewBox="0 0 380 210">
+            <!-- Grid lines -->
+            <line class="sv-grid" x1="50" y1="20"    x2="360" y2="20"/>
+            <line class="sv-grid" x1="50" y1="97.5"  x2="360" y2="97.5"/>
+            <line class="sv-grid" x1="50" y1="170"   x2="360" y2="170"/>
+            <line class="sv-grid" x1="50"  y1="20" x1="50"  x2="50"  y2="170"/>
+            <line class="sv-grid" x1="205" y1="20" x2="205" y2="170"/>
+            <line class="sv-grid" x1="360" y1="20" x2="360" y2="170"/>
+            <!-- Axes -->
+            <line class="sv-axis" x1="50" y1="170" x2="360" y2="170"/>
+            <line class="sv-axis" x1="50" y1="20"  x2="50"  y2="170"/>
+            <!-- Axis ticks -->
+            <line class="sv-tick" x1="50"  y1="170" x2="50"  y2="175"/>
+            <line class="sv-tick" x1="205" y1="170" x2="205" y2="175"/>
+            <line class="sv-tick" x1="360" y1="170" x2="360" y2="175"/>
+            <line class="sv-tick" x1="45" y1="20"   x2="50"  y2="20"/>
+            <line class="sv-tick" x1="45" y1="97.5" x2="50"  y2="97.5"/>
+            <line class="sv-tick" x1="45" y1="170"  x2="50"  y2="170"/>
+            <!-- Y labels -->
+            <text class="sv-label" x="42" y="23"   text-anchor="end">1e-3</text>
+            <text class="sv-label" x="42" y="100.5" text-anchor="end">5e-4</text>
+            <text class="sv-label" x="42" y="173"  text-anchor="end">0</text>
+            <!-- X labels -->
+            <text class="sv-label" x="50"  y="186" text-anchor="middle">0</text>
+            <text class="sv-label" x="205" y="186" text-anchor="middle">5k</text>
+            <text class="sv-label" x="360" y="186" text-anchor="middle">10k</text>
+            <!-- Axis titles -->
+            <text class="sv-label" x="205" y="202" text-anchor="middle" style="font-size:9px;letter-spacing:0.08em;">STEP</text>
+            <text class="sv-label" x="12" y="97.5" text-anchor="middle" style="font-size:9px;" transform="rotate(-90,12,97.5)">LR</text>
+            <!-- Step-decay curve -->
+            <polyline class="sv-blue"
+              points="50,25 81,25 81,39.5 112,39.5 112,52.5 143,52.5 143,64.3 174,64.3 174,74.9 205,74.9 205,84.4 236,84.4 236,93.0 267,93.0 267,100.7 298,100.7 298,107.6 329,107.6 329,113.9 360,113.9"/>
+            <!-- Decay event dots -->
+            <circle class="sv-dot-blue" cx="81"  cy="39.5"  r="3"/>
+            <circle class="sv-dot-blue" cx="112" cy="52.5"  r="3"/>
+            <circle class="sv-dot-blue" cx="143" cy="64.3"  r="3"/>
+            <circle class="sv-dot-blue" cx="174" cy="74.9"  r="3"/>
+            <circle class="sv-dot-blue" cx="205" cy="84.4"  r="3"/>
+            <circle class="sv-dot-blue" cx="236" cy="93.0"  r="3"/>
+            <circle class="sv-dot-blue" cx="267" cy="100.7" r="3"/>
+            <circle class="sv-dot-blue" cx="298" cy="107.6" r="3"/>
+            <circle class="sv-dot-blue" cx="329" cy="113.9" r="3"/>
+            <!-- Start dot -->
+            <circle class="sv-dot-teal" cx="50" cy="25" r="4"/>
+          </svg>
+        </div>
+
+        <!-- Chart B: Training Loss (log scale) -->
+        <div class="chart-wrap">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Training Loss Convergence</div>
+              <div class="chart-sub">L_total · log scale</div>
+            </div>
+            <span class="badge badge-teal">log₁₀</span>
+          </div>
+          <!-- viewBox: 380×210, plot area x=[50,360] y=[20,170] -->
+          <!-- log10 range: -3 to 1.5 (4.5 decades), y = 170 - ((log+3)/4.5)*145 -->
+          <svg class="chart-svg" viewBox="0 0 380 210">
+            <!-- Y grid at log=1,0,-1,-2 -->
+            <line class="sv-grid" x1="50" y1="41"  x2="360" y2="41"/>   <!-- log=1  "10"  -->
+            <line class="sv-grid" x1="50" y1="73"  x2="360" y2="73"/>   <!-- log=0  "1"   -->
+            <line class="sv-grid" x1="50" y1="106" x2="360" y2="106"/>  <!-- log=-1 "0.1" -->
+            <line class="sv-grid" x1="50" y1="138" x2="360" y2="138"/>  <!-- log=-2 "0.01"-->
+            <line class="sv-grid" x1="50" y1="170" x2="360" y2="170"/>  <!-- log=-3 "1e-3"-->
+            <!-- X grid -->
+            <line class="sv-grid" x1="205" y1="20" x2="205" y2="170"/>
+            <line class="sv-grid" x1="360" y1="20" x2="360" y2="170"/>
+            <!-- Axes -->
+            <line class="sv-axis" x1="50" y1="170" x2="360" y2="170"/>
+            <line class="sv-axis" x1="50" y1="20"  x2="50"  y2="170"/>
+            <!-- Y ticks & labels -->
+            <line class="sv-tick" x1="45" y1="41"  x2="50" y2="41"/>
+            <line class="sv-tick" x1="45" y1="73"  x2="50" y2="73"/>
+            <line class="sv-tick" x1="45" y1="106" x2="50" y2="106"/>
+            <line class="sv-tick" x1="45" y1="138" x2="50" y2="138"/>
+            <line class="sv-tick" x1="45" y1="170" x2="50" y2="170"/>
+            <text class="sv-label" x="42" y="44"   text-anchor="end">10</text>
+            <text class="sv-label" x="42" y="76"   text-anchor="end">1</text>
+            <text class="sv-label" x="42" y="109"  text-anchor="end">0.1</text>
+            <text class="sv-label" x="42" y="141"  text-anchor="end">0.01</text>
+            <text class="sv-label" x="42" y="173"  text-anchor="end">1e-3</text>
+            <!-- X ticks & labels -->
+            <line class="sv-tick" x1="50"  y1="170" x2="50"  y2="175"/>
+            <line class="sv-tick" x1="205" y1="170" x2="205" y2="175"/>
+            <line class="sv-tick" x1="360" y1="170" x2="360" y2="175"/>
+            <text class="sv-label" x="50"  y="186" text-anchor="middle">0</text>
+            <text class="sv-label" x="205" y="186" text-anchor="middle">5k</text>
+            <text class="sv-label" x="360" y="186" text-anchor="middle">10k</text>
+            <text class="sv-label" x="205" y="202" text-anchor="middle" style="font-size:9px;letter-spacing:0.08em;">STEP</text>
+            <text class="sv-label" x="12" y="97.5" text-anchor="middle" style="font-size:9px;" transform="rotate(-90,12,97.5)">LOSS</text>
+            <!-- Area fill -->
+            <polygon class="sv-area-teal"
+              points="50,34 53,68 66,100 81,123 112,130 143,148 174,151 205,155 267,160 360,163 360,170 50,170"/>
+            <!-- Loss curve (teal) -->
+            <polyline class="sv-teal"
+              points="50,34 53,68 66,100 81,123 112,130 143,148 174,151 205,155 267,160 360,163"/>
+            <!-- Checkpoint dots -->
+            <circle class="sv-dot-teal" cx="81"  cy="123" r="3.5"/>
+            <circle class="sv-dot-teal" cx="112" cy="130" r="3.5"/>
+            <circle class="sv-dot-teal" cx="143" cy="148" r="3.5"/>
+            <circle class="sv-dot-teal" cx="174" cy="151" r="3.5"/>
+            <circle class="sv-dot-teal" cx="205" cy="155" r="3.5"/>
+            <circle class="sv-dot-teal" cx="267" cy="160" r="3.5"/>
+            <circle class="sv-dot-teal" cx="360" cy="163" r="3.5"/>
+            <!-- LR decay annotation -->
+            <line style="stroke:var(--accent2);stroke-width:1;stroke-dasharray:3 2;" x1="81" y1="20" x2="81" y2="170"/>
+            <text style="fill:var(--accent2);font-family:var(--font-mono);font-size:8px;" x="83" y="32">lr×0.9</text>
+          </svg>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-line legend-line-teal"></div>L_total</div>
+            <div class="legend-item" style="color:var(--accent2);">│ LR decay event</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 08. HEATMAP ═══════════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">08 &nbsp; Heatmap Grid</div>
+    <div class="panel">
+      <div class="flex-row" style="align-items:flex-start; gap:40px; flex-wrap:wrap;">
+        <!-- Heatmap A: u-velocity -->
+        <div class="chart-wrap" style="max-width:520px;">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">u-velocity Field &nbsp; u(x,y)</div>
+              <div class="chart-sub">LDC approximation · Re = 3000</div>
+            </div>
+            <span class="badge badge-teal">u component</span>
+          </div>
+          <div class="heatmap-wrap">
+            <div class="heatmap-yaxis">
+              <span>1.0</span><span>0.75</span><span>0.5</span><span>0.25</span><span>0.0</span>
+            </div>
+            <div class="heatmap-inner">
+              <svg id="heatmap-u" class="heatmap-svg" viewBox="0 0 480 240" style="height:240px;"></svg>
+              <div class="heatmap-xaxis"><span>0.0</span><span>0.25</span><span>0.5</span><span>0.75</span><span>1.0</span></div>
+            </div>
+            <div class="heatmap-colorbar">
+              <div class="cb-labels"><span class="t-blue">high</span></div>
+              <div class="cb-track"></div>
+              <div class="cb-labels"><span class="t-dim">low</span></div>
+            </div>
+          </div>
+        </div>
+        <!-- Heatmap B: attention weights (example) -->
+        <div class="chart-wrap" style="max-width:320px;">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Attention Weights</div>
+              <div class="chart-sub">CrossAttn · head 0 · step 10k</div>
+            </div>
+            <span class="badge badge-purple">attn</span>
+          </div>
+          <div class="heatmap-wrap">
+            <div class="heatmap-yaxis" style="height:200px;">
+              <span>Q</span><span></span><span></span><span></span><span>Q</span>
+            </div>
+            <div class="heatmap-inner">
+              <svg id="heatmap-attn" class="heatmap-svg" viewBox="0 0 300 200" style="height:200px;"></svg>
+              <div class="heatmap-xaxis"><span>KV start</span><span></span><span>KV end</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 09. COMPARISON TABLE ══════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">09 &nbsp; Comparison Table</div>
+    <div class="panel">
+      <div class="comp-table-wrap">
+        <table class="comp-table">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Run 1 &nbsp;<span style="color:var(--text-dim);font-weight:400;">StepLR 5k/0.5</span></th>
+              <th>Run 2 &nbsp;<span style="color:var(--text-dim);font-weight:400;">StepLR 1k/0.9</span></th>
+              <th>Δ (R2 vs R1)</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>val rel_L2 @ 2000</td>
+              <td class="neutral">0.725</td>
+              <td class="neutral">0.734</td>
+              <td class="neutral">+1.2%</td>
+              <td style="color:var(--text-dim);">初期相近</td>
+            </tr>
+            <tr>
+              <td>val rel_L2 @ 4000</td>
+              <td class="worse">0.935</td>
+              <td class="better">0.278</td>
+              <td class="delta-good">↓70.3%</td>
+              <td style="color:var(--text-dim);">Run 2 優勢顯著</td>
+            </tr>
+            <tr>
+              <td>val rel_L2 @ 10000</td>
+              <td class="better">0.234</td>
+              <td class="neutral">—</td>
+              <td class="neutral">—</td>
+              <td style="color:var(--text-dim);">Run 1 最終結果</td>
+            </tr>
+            <tr>
+              <td>LR @ step 5000</td>
+              <td class="neutral" style="color:var(--accent-err);">×0.5 → 5e-4</td>
+              <td class="neutral">×0.9⁵ → 5.9e-4</td>
+              <td class="neutral">smoother</td>
+              <td style="color:var(--text-dim);">Run 1 急降</td>
+            </tr>
+            <tr>
+              <td>LR @ step 10000</td>
+              <td class="neutral">2.5e-4</td>
+              <td class="neutral">3.49e-4</td>
+              <td class="neutral">+40%</td>
+              <td style="color:var(--text-dim);">Run 2 較高終止 LR</td>
+            </tr>
+            <tr>
+              <td>Total params</td>
+              <td colspan="2" class="neutral" style="text-align:center;">366,111 (identical)</td>
+              <td class="neutral">—</td>
+              <td style="color:var(--text-dim);">同架構</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 10. STEP TIMELINE ══════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">10 &nbsp; Step Timeline</div>
+    <div class="panel">
+      <div class="timeline-wrap">
+        <!-- Two-run timeline. x=[60,640], track at y=70 (Run1) and y=110 (Run2) -->
+        <svg class="timeline-svg" viewBox="0 0 700 175">
+
+          <!-- Run labels -->
+          <text class="tl-run-label" x="40" y="73" text-anchor="end">Run 1</text>
+          <text class="tl-run-label" x="40" y="113" text-anchor="end">Run 2</text>
+
+          <!-- Tracks -->
+          <line class="sv-axis" x1="60" y1="70"  x2="645" y2="70"/>
+          <line class="sv-axis" x1="60" y1="110" x2="645" y2="110"/>
+
+          <!-- Connector verticals at shared x -->
+          <line class="sv-grid" x1="60"  y1="55"  x2="60"  y2="130"/>
+          <line class="sv-grid" x1="176" y1="55"  x2="176" y2="130"/>
+          <line class="sv-grid" x1="292" y1="55"  x2="292" y2="130"/>
+          <line class="sv-grid" x1="408" y1="55"  x2="408" y2="130"/>
+          <line class="sv-grid" x1="524" y1="55"  x2="524" y2="130"/>
+          <line class="sv-grid" x1="640" y1="55"  x2="640" y2="130"/>
+
+          <!-- Step labels (shared x) -->
+          <text class="tl-label" x="60"  y="148" text-anchor="middle">0</text>
+          <text class="tl-label" x="176" y="148" text-anchor="middle">2k</text>
+          <text class="tl-label" x="292" y="148" text-anchor="middle">4k</text>
+          <text class="tl-label" x="350" y="148" text-anchor="middle" style="fill:var(--accent2)">5k</text>
+          <text class="tl-label" x="408" y="148" text-anchor="middle">6k</text>
+          <text class="tl-label" x="524" y="148" text-anchor="middle">8k</text>
+          <text class="tl-label" x="640" y="148" text-anchor="middle">10k</text>
+
+          <!-- LR decay event: Run 1 at step 5000 (x=350) -->
+          <rect class="tl-event" x="342" y="58" width="16" height="24" rx="2"/>
+          <text class="tl-event-label" x="350" y="53" text-anchor="middle">×0.5</text>
+          <line style="stroke:var(--accent2);stroke-width:1.5;stroke-dasharray:3 2;" x1="350" y1="58" x2="350" y2="82"/>
+
+          <!-- ── Run 1 nodes ── -->
+          <!-- step 0 -->
+          <circle class="tl-node-dim" cx="60" cy="70" r="5"/>
+          <!-- step 2000: val=0.725 -->
+          <circle class="tl-node-blue" cx="176" cy="70" r="6"/>
+          <text class="tl-val" x="176" y="57" text-anchor="middle">0.725</text>
+          <!-- step 4000: val=0.935 (got worse) -->
+          <circle class="tl-node-err" cx="292" cy="70" r="6"/>
+          <text class="tl-val" x="292" y="57" text-anchor="middle" style="fill:var(--accent-err)">0.935</text>
+          <!-- step 10000: val=0.234 (best) -->
+          <circle class="tl-node-teal" cx="640" cy="70" r="7"/>
+          <text class="tl-val" x="640" y="57" text-anchor="middle" style="fill:var(--accent)">0.234</text>
+          <!-- "best" label -->
+          <text style="fill:var(--accent);font-family:var(--font-mono);font-size:8px;" x="640" y="46" text-anchor="middle">BEST</text>
+
+          <!-- ── Run 2 nodes ── -->
+          <!-- step 0 -->
+          <circle class="tl-node-dim" cx="60" cy="110" r="5"/>
+          <!-- step 2000: val=0.734 -->
+          <circle class="tl-node-blue" cx="176" cy="110" r="6"/>
+          <text class="tl-val" x="176" y="127" text-anchor="middle">0.734</text>
+          <!-- step 4000: val=0.278 (much better) -->
+          <circle class="tl-node-teal" cx="292" cy="110" r="6"/>
+          <text class="tl-val" x="292" y="127" text-anchor="middle" style="fill:var(--accent)">0.278</text>
+          <!-- Run 2 still in progress at 10k -->
+          <circle class="tl-node-purple" cx="640" cy="110" r="6" style="stroke-dasharray:3 2;fill:none;stroke:var(--accent3);"/>
+          <text class="tl-val" x="640" y="127" text-anchor="middle" style="fill:var(--accent3)">...</text>
+
+          <!-- Legend -->
+          <circle cx="80"  cy="163" r="5" class="tl-node-teal"/>
+          <text class="tl-label" x="90"  y="167">best</text>
+          <circle cx="140" cy="163" r="5" class="tl-node-blue"/>
+          <text class="tl-label" x="150" y="167">checkpoint</text>
+          <circle cx="230" cy="163" r="5" class="tl-node-err"/>
+          <text class="tl-label" x="240" y="167">degraded</text>
+          <rect x="310" y="158" width="12" height="10" class="tl-event" rx="2"/>
+          <text class="tl-label" x="328" y="167">LR event</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 11. CODE BLOCK ════════════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">11 &nbsp; Code Block</div>
+    <div class="panel panel--flush">
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-lang-label">python</span>
+          <span class="code-filename">src/pi_onet/pit_ldc.py</span>
+        </div>
+        <pre class="code-body"><code><div class="code-line"><span class="ln">1</span><span class="tkw">import</span> <span class="tka">math</span></div>
+<div class="code-line"><span class="ln">2</span><span class="tkw">import</span> <span class="tka">torch</span></div>
+<div class="code-line"><span class="ln">3</span><span class="tkw">from</span> <span class="tka">torch</span> <span class="tkw">import</span> <span class="tka">Tensor</span></div>
+<div class="code-line"><span class="ln">4</span></div>
+<div class="code-line"><span class="ln">5</span></div>
+<div class="code-line"><span class="ln">6</span><span class="tkw">def</span> <span class="tkf">rff_encode</span>(<span class="tka">z</span>: <span class="tkt">Tensor</span>, <span class="tka">B</span>: <span class="tkt">Tensor</span>) -> <span class="tkt">Tensor</span>:</div>
+<div class="code-line"><span class="ln">7</span>    <span class="tks">"""Random Fourier Features positional encoding.</span></div>
+<div class="code-line"><span class="ln">8</span><span class="tks">    </span></div>
+<div class="code-line"><span class="ln">9</span><span class="tks">    Maps spatial coords through a frozen random frequency matrix</span></div>
+<div class="code-line"><span class="ln">10</span><span class="tks">    to approximate shift-invariant kernels (Bochner's theorem).</span></div>
+<div class="code-line"><span class="ln">11</span><span class="tks">    Shared between SensorEncoder and QueryEncoder to align frequency</span></div>
+<div class="code-line"><span class="ln">12</span><span class="tks">    basis across both input streams.</span></div>
+<div class="code-line"><span class="ln">13</span><span class="tks">    </span></div>
+<div class="code-line"><span class="ln">14</span><span class="tks">    Args:</span></div>
+<div class="code-line"><span class="ln">15</span><span class="tks">        z: [N, 2]  spatial coordinates (x, y) ∈ [0, 1]²</span></div>
+<div class="code-line"><span class="ln">16</span><span class="tks">        B: [2, F]  frozen frequency matrix (register_buffer)</span></div>
+<div class="code-line"><span class="ln">17</span><span class="tks">    Returns:</span></div>
+<div class="code-line"><span class="ln">18</span><span class="tks">        Tensor of shape [N, 2F]  (sin and cos features concatenated)</span></div>
+<div class="code-line"><span class="ln">19</span><span class="tks">    """</span></div>
+<div class="code-line"><span class="ln">20</span>    <span class="tka">proj</span> = <span class="tkn">2.0</span> * <span class="tka">math</span>.<span class="tkf">pi</span> * <span class="tka">z</span> @ <span class="tka">B</span>         <span class="tkc"># [N, F]</span></div>
+<div class="code-line"><span class="ln">21</span>    <span class="tkw">return</span> <span class="tka">torch</span>.<span class="tkf">cat</span>([<span class="tka">proj</span>.<span class="tkf">sin</span>(), <span class="tka">proj</span>.<span class="tkf">cos</span>()], <span class="tka">dim</span>=<span class="tkn">-1</span>)  <span class="tkc"># [N, 2F]</span></div>
+<div class="code-line"><span class="ln">22</span></div>
+<div class="code-line"><span class="ln">23</span></div>
+<div class="code-line"><span class="ln">24</span><span class="tkw">class</span> <span class="tkf">CrossAttentionOperator</span>(<span class="tka">nn</span>.<span class="tka">Module</span>):</div>
+<div class="code-line"><span class="ln">25</span>    <span class="tkw">def</span> <span class="tkf">forward</span>(</div>
+<div class="code-line"><span class="ln">26</span>        <span class="tka">self</span>,</div>
+<div class="code-line"><span class="ln">27</span>        <span class="tka">sensors</span>: <span class="tkt">Tensor</span>,     <span class="tkc"># [N_s, 5]  raw sensor readings</span></div>
+<div class="code-line"><span class="ln">28</span>        <span class="tka">re_norm</span>: <span class="tkt">float</span>,      <span class="tkc"># (Re − 4000) / 816</span></div>
+<div class="code-line"><span class="ln">29</span>        <span class="tka">xy</span>:      <span class="tkt">Tensor</span>,     <span class="tkc"># [N_q, 2]  query coordinates</span></div>
+<div class="code-line"><span class="ln">30</span>        <span class="tka">c</span>:       <span class="tkt">Tensor</span>,     <span class="tkc"># [N_q]     component index  0=u 1=v 2=p</span></div>
+<div class="code-line"><span class="ln">31</span>    ) -> <span class="tkt">Tensor</span>:            <span class="tkc"># [N_q, 1]</span></div>
+<div class="code-line"><span class="ln">32</span>        <span class="tka">kv</span>  = <span class="tka">self</span>.<span class="tkf">sensor_encoder</span>(<span class="tka">sensors</span>, <span class="tka">re_norm</span>)  <span class="tkc"># [N_s+1, d]</span></div>
+<div class="code-line"><span class="ln">33</span>        <span class="tka">q</span>   = <span class="tka">self</span>.<span class="tkf">query_encoder</span>(<span class="tka">xy</span>, <span class="tka">c</span>)             <span class="tkc"># [N_q,   d]</span></div>
+<div class="code-line"><span class="ln">34</span>        <span class="tka">out</span> = <span class="tka">self</span>.<span class="tkf">cross_attn</span>(<span class="tka">q</span>, <span class="tka">kv</span>, <span class="tka">kv</span>)[<span class="tkn">0</span>]         <span class="tkc"># [N_q,   d]</span></div>
+<div class="code-line"><span class="ln">35</span>        <span class="tka">out</span> = <span class="tka">self</span>.<span class="tkf">proj</span>(<span class="tka">self</span>.<span class="tkf">norm</span>(<span class="tka">out</span>))              <span class="tkc"># [N_q,   1]</span></div>
+<div class="code-line"><span class="ln">36</span>        <span class="tkw">return</span> <span class="tka">out</span> * <span class="tka">self</span>.<span class="tka">component_scale</span>[<span class="tka">c</span>].unsqueeze(<span class="tkn">-1</span>) \</div>
+<div class="code-line"><span class="ln">37</span>                   + <span class="tka">self</span>.<span class="tka">component_bias</span>[<span class="tka">c</span>].unsqueeze(<span class="tkn">-1</span>)</div></code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 12. ANNOTATION DIAGRAM ══════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">12 &nbsp; Annotation Arrows (SVG Overlay)</div>
+    <div class="panel">
+      <p class="xs t-dim" style="margin-bottom:20px; font-family:var(--font-mono);">
+        Standalone annotated diagram — SVG overlay positioned absolutely on top of content boxes.
+      </p>
+
+      <!-- Annotated architecture overview -->
+      <div style="position:relative; padding:20px 0;">
+
+        <!-- 3 boxes in a row -->
+        <div style="display:grid; grid-template-columns: 200px 60px 180px 60px 160px; align-items:center; gap:0;">
+
+          <!-- Encoders -->
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div class="module-box mod-blue" style="padding:12px 14px;">
+              <div class="module-tag">encoder 1</div>
+              <div class="module-title" style="font-size:12px;">SensorEncoder</div>
+              <div class="module-detail" style="font-size:10px;">RFF(x,y) · self-attn</div>
+              <div class="shape-badge">[101, 128]</div>
+            </div>
+            <div class="module-box mod-purple" style="padding:12px 14px;">
+              <div class="module-tag">encoder 2</div>
+              <div class="module-title" style="font-size:12px;">QueryEncoder</div>
+              <div class="module-detail" style="font-size:10px;">RFF(x,y) · Embed(c,8)</div>
+              <div class="shape-badge">[N_q, 128]</div>
+            </div>
+          </div>
+
+          <!-- Arrow col -->
+          <div style="display:flex;flex-direction:column;gap:60px;align-items:center;">
+            <div style="width:100%;height:1px;background:var(--accent4);position:relative;">
+              <span style="position:absolute;right:-5px;top:-5px;font-size:9px;color:var(--accent4);">▶</span>
+              <span style="position:absolute;left:50%;top:4px;transform:translateX(-50%);font-size:8px;color:var(--text-dim);white-space:nowrap;">K, V</span>
+            </div>
+            <div style="width:100%;height:1px;background:var(--accent3);position:relative;">
+              <span style="position:absolute;right:-5px;top:-5px;font-size:9px;color:var(--accent3);">▶</span>
+              <span style="position:absolute;left:50%;top:4px;transform:translateX(-50%);font-size:8px;color:var(--text-dim);">Q</span>
+            </div>
+          </div>
+
+          <!-- CrossAttention -->
+          <div class="module-box mod-teal" style="align-self:stretch;display:flex;flex-direction:column;justify-content:center;padding:14px;">
+            <div class="module-tag">operator</div>
+            <div class="module-title" style="font-size:12px;">CrossAttention</div>
+            <div class="module-detail" style="font-size:10px;margin-top:4px;">
+              MHA(d=128, h=4)<br>LayerNorm → proj<br>ComponentScaler
+            </div>
+            <div class="shape-badge">[N_q, 1]</div>
+          </div>
+
+          <!-- Arrow -->
+          <div style="width:100%;height:1px;background:var(--accent2);position:relative;">
+            <span style="position:absolute;right:-5px;top:-5px;font-size:9px;color:var(--accent2);">▶</span>
+          </div>
+
+          <!-- Output -->
+          <div class="module-box mod-amber" style="padding:12px 14px;">
+            <div class="module-tag">output</div>
+            <div class="module-title" style="font-size:12px;">Field Value</div>
+            <div class="module-detail" style="font-size:10px;">u, v, or p</div>
+            <div class="shape-badge">[N_q, 1]</div>
+          </div>
+
+        </div>
+
+        <!-- SVG annotation overlay -->
+        <svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;"
+             viewBox="0 0 700 220" preserveAspectRatio="none">
+
+          <!-- Annotation 1: Shared B matrix spanning both encoders -->
+          <path class="sv-anno-line" d="M -20,55 C -50,55 -50,140 -20,140"/>
+          <line class="sv-anno-line" x1="-20" y1="55"  x2="5"  y2="55"/>
+          <line class="sv-anno-line" x1="-20" y1="140" x2="5"  y2="140"/>
+          <text class="sv-anno-label" x="-95" y="100" text-anchor="middle" transform="rotate(-90,-95,100)">Shared B [2,64]</text>
+          <polygon class="sv-anno-fill" points="-20,50 -15,55 -20,60"/>
+          <polygon class="sv-anno-fill" points="-20,135 -15,140 -20,145"/>
+
+          <!-- Annotation 2: 101 KV tokens -->
+          <line class="sv-anno-line" x1="255" y1="28"  x2="310" y2="28"/>
+          <line class="sv-anno-line" x1="310" y1="28"  x2="310" y2="58"/>
+          <polygon class="sv-anno-fill" points="305,58 310,68 315,58"/>
+          <text class="sv-anno-label" x="255" y="23" text-anchor="end">101 KV tokens</text>
+          <text class="sv-anno-label" x="255" y="34" text-anchor="end">(100 sensors + Re)</text>
+
+          <!-- Annotation 3: ComponentScaler -->
+          <line class="sv-anno-line" x1="520" y1="178" x2="520" y2="200"/>
+          <line class="sv-anno-line" x1="520" y1="200" x2="460" y2="200"/>
+          <line class="sv-anno-line" x1="460" y1="200" x2="460" y2="178"/>
+          <text class="sv-anno-label" x="490" y="215" text-anchor="middle">ComponentScaler</text>
+          <text class="sv-anno-label" x="490" y="224" text-anchor="middle" style="font-size:8.5px;">scale[c] × out + bias[c]</text>
+
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 13. ANNOTATION STRIP ═══════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">13 &nbsp; Annotation Strip</div>
+    <div class="panel">
+      <!-- Example: key design decisions below an architecture diagram -->
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px;">
+        <div class="module-box mod-blue" style="padding:12px;">
+          <div class="module-tag">encoder 1</div>
+          <div class="module-title" style="font-size:12px;">SensorEncoder</div>
+          <div class="module-detail">RFF + TransformerEncoder ×2</div>
+          <div class="shape-badge">[N_s+1, 128]</div>
+        </div>
+        <div class="module-box mod-purple" style="padding:12px;">
+          <div class="module-tag">operator</div>
+          <div class="module-title" style="font-size:12px;">CrossAttention</div>
+          <div class="module-detail">MHA(d=128, h=4)</div>
+          <div class="shape-badge">[N_q, 1]</div>
+        </div>
+        <div class="module-box mod-amber" style="padding:12px;">
+          <div class="module-tag">output</div>
+          <div class="module-title" style="font-size:12px;">ComponentScaler</div>
+          <div class="module-detail">out × scale[c] + bias[c]</div>
+          <div class="shape-badge">nn.Parameter(3)</div>
+        </div>
+      </div>
+
+      <!-- Default: 3-col, purple accent -->
+      <div class="anno-strip">
+        <div class="anno-item">
+          <div class="anno-marker">Design Decision A</div>
+          <div class="anno-desc">Description of the first key design decision — why it was chosen and what problem it solves.</div>
+        </div>
+        <div class="anno-item">
+          <div class="anno-marker">Design Decision B</div>
+          <div class="anno-desc">Second callout. Use for non-obvious choices the reader would otherwise miss when reading the diagram.</div>
+        </div>
+        <div class="anno-item">
+          <div class="anno-marker">Design Decision C</div>
+          <div class="anno-desc">Third item. Keeps the explanation close to the visual without cluttering the diagram itself.</div>
+        </div>
+      </div>
+
+      <!-- Variant: 2-col, teal accent -->
+      <div class="anno-strip anno-2col anno-teal" style="margin-top:20px; padding-top:20px;">
+        <div class="anno-item">
+          <div class="anno-marker">Shared B Matrix</div>
+          <div class="anno-desc">SensorEncoder 和 QueryEncoder 共用同一個 RFF 矩陣，確保兩者的座標編碼在相同特徵空間，使 cross-attention Q/KV 可以正確對齊。</div>
+        </div>
+        <div class="anno-item">
+          <div class="anno-marker">101 KV Tokens</div>
+          <div class="anno-desc">N_s=100 sensor tokens + 1 個 Re token (prepended)。Re token 攜帶 Reynolds number，讓模型條件化於流場參數。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 14. SENSOR DOMAIN MAP ══════════════════════════════════ -->
+  <div class="diagram-section">
+    <div class="section-label">14 &nbsp; Sensor Domain Map</div>
+    <div class="panel">
+      <div class="chart-pair">
+
+        <!-- Map A: LDC sensor placement -->
+        <div class="chart-box">
+          <div class="chart-box-title">Sensor Placement — LDC [0,1]²</div>
+          <svg viewBox="0 0 220 235" xmlns="http://www.w3.org/2000/svg" id="demo-sensor-map">
+            <!-- domain border -->
+            <rect x="10" y="10" width="200" height="200" class="sv-domain"/>
+            <!-- lid (moving top wall) -->
+            <line x1="10" y1="10" x2="210" y2="10" class="sv-lid-line"/>
+            <!-- boundary: bottom wall (y=0) -->
+            <circle cx="30"  cy="210" r="3" class="sv-bnd"/>
+            <circle cx="70"  cy="210" r="3" class="sv-bnd"/>
+            <circle cx="110" cy="210" r="3" class="sv-bnd"/>
+            <circle cx="150" cy="210" r="3" class="sv-bnd"/>
+            <circle cx="190" cy="210" r="3" class="sv-bnd"/>
+            <!-- boundary: top lid (y=1) -->
+            <circle cx="30"  cy="10" r="3" class="sv-bnd-lid"/>
+            <circle cx="70"  cy="10" r="3" class="sv-bnd-lid"/>
+            <circle cx="110" cy="10" r="3" class="sv-bnd-lid"/>
+            <circle cx="150" cy="10" r="3" class="sv-bnd-lid"/>
+            <circle cx="190" cy="10" r="3" class="sv-bnd-lid"/>
+            <!-- boundary: left wall (x=0) -->
+            <circle cx="10" cy="30"  r="3" class="sv-bnd"/>
+            <circle cx="10" cy="70"  r="3" class="sv-bnd"/>
+            <circle cx="10" cy="110" r="3" class="sv-bnd"/>
+            <circle cx="10" cy="150" r="3" class="sv-bnd"/>
+            <circle cx="10" cy="190" r="3" class="sv-bnd"/>
+            <!-- boundary: right wall (x=1) -->
+            <circle cx="210" cy="30"  r="3" class="sv-bnd"/>
+            <circle cx="210" cy="70"  r="3" class="sv-bnd"/>
+            <circle cx="210" cy="110" r="3" class="sv-bnd"/>
+            <circle cx="210" cy="150" r="3" class="sv-bnd"/>
+            <circle cx="210" cy="190" r="3" class="sv-bnd"/>
+            <!-- interior sensors: JS-generated -->
+            <g id="demo-interior-sensors"></g>
+            <!-- labels -->
+            <text x="5"   y="12"  class="sv-label" font-size="7.5" fill="var(--accent2)">▶ lid</text>
+            <text x="110" y="228" class="sv-label" text-anchor="middle" font-size="8">80 interior · 20 boundary</text>
+          </svg>
+        </div>
+
+        <!-- Map B: collocation points (physics sampling) -->
+        <div class="chart-box">
+          <div class="chart-box-title">Collocation Points — Physics Sampling</div>
+          <svg viewBox="0 0 220 235" xmlns="http://www.w3.org/2000/svg">
+            <!-- domain border -->
+            <rect x="10" y="10" width="200" height="200" class="sv-domain"/>
+            <!-- uniform random collocation pts: JS-generated -->
+            <g id="demo-colloc-pts"></g>
+            <!-- labels -->
+            <text x="110" y="228" class="sv-label" text-anchor="middle" font-size="8">1,024 random pts per step (uniform)</text>
+          </svg>
+        </div>
+
+      </div>
+
+      <!-- Annotation strip for the maps -->
+      <div class="anno-strip anno-2col anno-blue" style="margin-top:20px; padding-top:20px;">
+        <div class="anno-item">
+          <div class="anno-marker">Sensor Sampling</div>
+          <div class="anno-desc">Interior sensors sampled uniformly at random from [0.05, 0.95]². Boundary sensors fixed at 5 equally-spaced pts per wall. Same sensor set reused across all training steps.</div>
+        </div>
+        <div class="anno-item">
+          <div class="anno-marker">Physics Collocation</div>
+          <div class="anno-desc">Collocation points resampled each step from Uniform([0,1]²). Forces the physics residuals (NS equations) to be evaluated at diverse locations, preventing overfitting to a fixed grid.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <span>template.html — dark / light theme · component reference</span>
+    <span>2026-03-22</span>
+  </div>
+
+</div><!-- /.page -->
+
+<script>
+/* ── Theme Toggle ─────────────────────────────────────── */
+function toggleTheme() {
+  const html  = document.documentElement;
+  const label = document.getElementById('toggle-label');
+  html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  label.textContent  = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem('template-theme', html.dataset.theme); } catch(e) {}
+  generateAllHeatmaps();
+  drawAllSensorMaps();
+}
+try {
+  const saved = localStorage.getItem('template-theme');
+  if (saved) {
+    document.documentElement.dataset.theme = saved;
+    document.getElementById('toggle-label').textContent = saved === 'dark' ? 'light' : 'dark';
+  }
+} catch(e) {}
+
+/* ── Heatmap Generator ────────────────────────────────── */
+/*
+  API: generateHeatmap(svgId, dataFn, cols, rows)
+  dataFn(x, y) → value in [0,1]
+  Generates colored <rect> cells in the target SVG.
+  Respects current data-theme.
+*/
+function valToColor(val, theme, palette) {
+  palette = palette || 'blue';
+  val = Math.max(0, Math.min(1, val));
+  if (theme === 'dark') {
+    if (palette === 'purple') {
+      const r = Math.round(10  + val * 140);
+      const g = Math.round(12  + val * 40);
+      const b = Math.round(16  + val * 220);
+      const a = (0.1 + val * 0.9).toFixed(2);
+      return `rgba(${r},${g},${b},${a})`;
+    }
+    // default: blue→teal
+    const r = Math.round(10  + val * 55);
+    const g = Math.round(12  + val * 130);
+    const b = Math.round(16  + val * 220);
+    const a = (0.12 + val * 0.88).toFixed(2);
+    return `rgba(${r},${g},${b},${a})`;
+  } else {
+    if (palette === 'purple') {
+      const r = Math.round(248 - val * 130);
+      const g = Math.round(248 - val * 180);
+      const b = Math.round(252 - val * 10);
+      return `rgb(${r},${g},${b})`;
+    }
+    // light: white → blue
+    const r = Math.round(240 - val * 200);
+    const g = Math.round(245 - val * 175);
+    const b = Math.round(252 - val * 12);
+    return `rgb(${Math.max(40,r)},${Math.max(60,g)},${b})`;
+  }
+}
+
+function generateHeatmap(svgId, dataFn, cols, rows, palette) {
+  const svg = document.getElementById(svgId);
+  if (!svg) return;
+  const theme = document.documentElement.dataset.theme;
+  const vb    = svg.getAttribute('viewBox').split(' ').map(Number);
+  const W = vb[2], H = vb[3];
+  const cw = W / cols, ch = H / rows;
+  const cells = [];
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const x   = i / (cols - 1);
+      const y   = 1 - j / (rows - 1);  // flip: j=0 → top → phy y=1
+      const val = dataFn(x, y);
+      const col = valToColor(val, theme, palette);
+      cells.push(
+        `<rect x="${(i*cw).toFixed(1)}" y="${(j*ch).toFixed(1)}" ` +
+        `width="${(cw+0.3).toFixed(1)}" height="${(ch+0.3).toFixed(1)}" ` +
+        `fill="${col}" rx="0.5"/>`
+      );
+    }
+  }
+  svg.innerHTML = cells.join('');
+}
+
+function generateAllHeatmaps() {
+  // u-velocity: LDC approximation  sin(πx)·y·(1−y²)·2
+  generateHeatmap('heatmap-u', (x, y) => {
+    const u = Math.sin(Math.PI * x) * Math.pow(y, 0.4) * (1 - y * 0.15) * 1.1;
+    return Math.max(0, Math.min(1, u));
+  }, 32, 16, 'blue');
+
+  // attention weights: diagonal band pattern (simulated)
+  generateHeatmap('heatmap-attn', (x, y) => {
+    const diag = 1 - Math.abs(x - y) * 3;
+    const bias = x < 0.1 ? 0.6 : 0;        // first KV token (Re) gets high attn
+    return Math.max(0, Math.min(1, diag * 0.8 + bias));
+  }, 20, 20, 'purple');
+}
+
+/* ── Seeded PRNG (LCG) ────────────────────────────────── */
+/*
+  API: const rng = seededRng(seed);  rng() → float in [0,1)
+  Deterministic — same seed always produces the same sensor layout.
+*/
+function seededRng(seed) {
+  let s = seed >>> 0;
+  return function() {
+    s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+/* ── Sensor Domain Map ────────────────────────────────── */
+/*
+  API: drawSensorMap(containerId, n, seed)
+    containerId — id of the <g> element inside the SVG
+    n           — number of interior sensors to generate
+    seed        — integer seed for reproducibility
+  Domain [0,1]² maps to SVG as:  svgX = 10 + x*200,  svgY = 10 + (1−y)*200
+  Keeps a margin of 0.05 so dots don't overlap the border.
+*/
+function drawSensorMap(containerId, n, seed) {
+  const g = document.getElementById(containerId);
+  if (!g) return;
+  const rng = seededRng(seed);
+  const circles = [];
+  while (circles.length < n) {
+    const x = 0.05 + rng() * 0.90;
+    const y = 0.05 + rng() * 0.90;
+    const cx = (10 + x * 200).toFixed(1);
+    const cy = (10 + (1 - y) * 200).toFixed(1);
+    circles.push(`<circle cx="${cx}" cy="${cy}" r="2.5" class="sv-int"/>`);
+  }
+  g.innerHTML = circles.join('');
+}
+
+/*
+  Collocation points: purely random (new seed each call simulates per-step sampling).
+  For the demo we fix seed=99 to show a representative uniform distribution.
+*/
+function drawCollocPts(containerId, n, seed) {
+  const g = document.getElementById(containerId);
+  if (!g) return;
+  const rng = seededRng(seed);
+  const circles = [];
+  for (let i = 0; i < n; i++) {
+    const x = rng(), y = rng();
+    const cx = (10 + x * 200).toFixed(1);
+    const cy = (10 + (1 - y) * 200).toFixed(1);
+    circles.push(`<circle cx="${cx}" cy="${cy}" r="1.5" class="sv-int" opacity="0.5"/>`);
+  }
+  g.innerHTML = circles.join('');
+}
+
+function drawAllSensorMaps() {
+  drawSensorMap('demo-interior-sensors', 80, 42);
+  drawCollocPts('demo-colloc-pts',       120, 99);
+  // If you have additional maps in your page, call drawSensorMap here.
+}
+
+// Run on load
+generateAllHeatmaps();
+drawAllSensorMaps();
+</script>
+</body>
+</html>

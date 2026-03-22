@@ -22,15 +22,139 @@ import torch
 import torch.nn as nn
 from deepxde import config as dde_config
 
-from pi_onet.ldc_train import (
-    steady_ns_residuals,
-    compute_bc_loss,
-    compute_gauge_loss,
-    count_parameters,
-    write_json,
-)
-from pi_onet.train import configure_torch_runtime
 from pi_onet.ldc_dataset import RE_MEAN, RE_STD
+
+
+# ── Torch runtime ─────────────────────────────────────────────────────────────
+
+def _resolve_torch_device(device_preference: str) -> torch.device:
+    """What: 解析使用者指定的裝置偏好並回傳可用裝置。"""
+    preference = device_preference.lower()
+    if preference == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    if preference == "cuda":
+        if not torch.cuda.is_available():
+            raise ValueError("指定 --device cuda，但目前環境沒有可用 CUDA。")
+        return torch.device("cuda")
+    if preference == "mps":
+        if not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+            raise ValueError("指定 --device mps，但目前環境沒有可用 Metal (MPS)。")
+        return torch.device("mps")
+    if preference == "cpu":
+        return torch.device("cpu")
+    raise ValueError(f"不支援的 device: {device_preference}")
+
+
+def configure_torch_runtime(device_preference: str) -> torch.device:
+    """What: 啟用 PyTorch 執行環境並回傳實際使用裝置。"""
+    torch.set_float32_matmul_precision("high")
+    device = _resolve_torch_device(device_preference)
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
+    return device
+
+
+# ── Physics utilities ─────────────────────────────────────────────────────────
+
+def _grad(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """What: First-order partial derivative dy/dx via autograd.
+
+    Why: allow_unused=True handles the case where y has a computation graph but
+         doesn't use x; PyTorch returns None in that case, which we convert to zeros.
+         A pre-check on y.grad_fn guards against plain constant tensors (no graph at all)
+         that would otherwise raise instead of returning zero.
+    """
+    if y.grad_fn is None and not y.requires_grad:
+        return torch.zeros_like(x)
+    grad = torch.autograd.grad(y, x, torch.ones_like(y), create_graph=True, allow_unused=True)[0]
+    if grad is None:
+        return torch.zeros_like(x)
+    return grad
+
+
+def steady_ns_residuals(
+    u_fn: Callable,
+    v_fn: Callable,
+    p_fn: Callable,
+    xy: torch.Tensor,
+    re: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """What: Compute steady NS and continuity residuals at collocation points.
+
+    Why: Steady incompressible NS — no time derivative; Re enters as viscous coefficient.
+    Returns: ns_x [N,1], ns_y [N,1], cont [N,1]
+    """
+    u, v, p = u_fn(xy), v_fn(xy), p_fn(xy)
+    u_xy = _grad(u, xy)
+    v_xy = _grad(v, xy)
+    p_xy = _grad(p, xy)
+    du_dx, du_dy = u_xy[:, 0:1], u_xy[:, 1:2]
+    dv_dx, dv_dy = v_xy[:, 0:1], v_xy[:, 1:2]
+    dp_dx, dp_dy = p_xy[:, 0:1], p_xy[:, 1:2]
+    du_dx2 = _grad(du_dx, xy)[:, 0:1]
+    du_dy2 = _grad(du_dy, xy)[:, 1:2]
+    dv_dx2 = _grad(dv_dx, xy)[:, 0:1]
+    dv_dy2 = _grad(dv_dy, xy)[:, 1:2]
+    nu = 1.0 / float(re)
+    ns_x = u * du_dx + v * du_dy + dp_dx - nu * (du_dx2 + du_dy2)
+    ns_y = u * dv_dx + v * dv_dy + dp_dy - nu * (dv_dx2 + dv_dy2)
+    cont = du_dx + dv_dy
+    return ns_x, ns_y, cont
+
+
+def compute_bc_loss(
+    model_fn: Callable,
+    n_per_wall: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """What: Compute Dirichlet BC loss for u and v on all 4 walls.
+
+    Why: LDC BCs: top (y=1) u=1 v=0; others u=0 v=0. Pressure excluded — no wall BC.
+    """
+    t_closed = torch.linspace(0.0, 1.0, n_per_wall, device=device, dtype=dde_config.real(torch))
+    t_open = torch.linspace(0.0, 1.0, n_per_wall + 2, device=device, dtype=dde_config.real(torch))[1:-1]
+    ones_h = torch.ones(n_per_wall, device=device, dtype=dde_config.real(torch))
+    zeros_h = torch.zeros(n_per_wall, device=device, dtype=dde_config.real(torch))
+    zeros_v = torch.zeros(n_per_wall, device=device, dtype=dde_config.real(torch))
+    total_loss = torch.zeros(1, device=device, dtype=dde_config.real(torch))
+    walls = [
+        (torch.stack([t_closed, ones_h], dim=1), ones_h, zeros_h),    # top: u=1, v=0
+        (torch.stack([t_closed, zeros_h], dim=1), zeros_h, zeros_h),  # bottom: u=0, v=0
+        (torch.stack([zeros_v, t_open], dim=1), zeros_v, zeros_v),    # left: u=0, v=0
+        (torch.stack([ones_h, t_open], dim=1), zeros_v, zeros_v),     # right: u=0, v=0
+    ]
+    with torch.device(device):
+        for xy_wall, u_target, v_target in walls:
+            u_pred = model_fn(xy_wall, c=0).squeeze(1)
+            v_pred = model_fn(xy_wall, c=1).squeeze(1)
+            total_loss = total_loss + torch.mean((u_pred - u_target) ** 2)
+            total_loss = total_loss + torch.mean((v_pred - v_target) ** 2)
+    return total_loss
+
+
+def compute_gauge_loss(model_fn: Callable, device: torch.device) -> torch.Tensor:
+    """What: Penalise p at bottom-left corner (x=0,y=0) = 0 (pressure gauge fix).
+
+    Why: Steady NS has pressure determined only up to additive constant; gauge pins it.
+    """
+    corner = torch.zeros(1, 2, device=device, dtype=dde_config.real(torch))
+    with torch.device(device):
+        p_corner = model_fn(corner, c=2).squeeze()
+    return p_corner ** 2
+
+
+def count_parameters(model: torch.nn.Module) -> int:
+    """What: Count total trainable parameters."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def write_json(path: Path, data: dict) -> None:
+    """What: Write a dict as formatted JSON."""
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 # ── RFF helper ────────────────────────────────────────────────────────────────
@@ -374,6 +498,12 @@ def train_pit_ldc(args: dict[str, Any]) -> None:
         scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer, step_size=args["lr_step_size"], gamma=args["lr_step_gamma"]
         )
+    elif args["lr_schedule"] == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=args["iterations"],
+            eta_min=args["min_learning_rate"],
+        )
 
     best_val_metric = float("inf")
     best_checkpoint_path: str | None = None
@@ -463,11 +593,19 @@ def train_pit_ldc(args: dict[str, Any]) -> None:
             with torch.no_grad():
                 net.eval()
                 total_rel_l2 = 0.0
+                val_batch = 4096  # split large val pool to avoid MPS tensor size limits
                 for i in range(num_re):
-                    pred_val = net(
-                        sensors_list[i], re_norm_list[i], xy_val, c_val
-                    ).squeeze(1)
                     ref_t = torch.tensor(ref_vals[i], dtype=torch.float32, device=device)
+                    pred_chunks = []
+                    for start in range(0, len(xy_val), val_batch):
+                        end = start + val_batch
+                        pred_chunks.append(
+                            net(
+                                sensors_list[i], re_norm_list[i],
+                                xy_val[start:end], c_val[start:end],
+                            ).squeeze(1)
+                        )
+                    pred_val = torch.cat(pred_chunks, dim=0)
                     rel_l2_i = (
                         torch.norm(pred_val - ref_t) / (torch.norm(ref_t) + 1e-8)
                     ).item()

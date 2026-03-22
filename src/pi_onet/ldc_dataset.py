@@ -55,6 +55,47 @@ def load_ldc_mat(path: Path) -> dict[str, np.ndarray]:
     }
 
 
+def _resize_grid(grid: dict[str, np.ndarray], target_size: int) -> dict[str, np.ndarray]:
+    """What: Bilinear-interpolate all fields of a square grid to target_size × target_size.
+
+    Why: Mat files for different Re may use different grid resolutions (e.g., Re=4000
+         is 256×256 while Re=3000/5000 are 257×257). A shared flat_index space requires
+         all grids to have the same ncols; otherwise the same flat_idx decodes to a
+         different (row, col) → (x, y) across grids, corrupting sensor and trunk
+         coordinates during training.
+
+    Invariants preserved:
+      - Domain stays [0, 1] × [0, 1].
+      - Boundary values at x=0, x=1, y=0, y=1 are preserved because the target
+        grid includes those exact endpoints (linspace).
+      - Fields returned as float64 1-D arrays, row-major (flat_idx = row * target_size + col).
+    """
+    src_size = int(round(len(grid["x"]) ** 0.5))
+    if src_size == target_size:
+        return grid
+
+    xs_src = np.unique(grid["x"])          # [src_size]
+    ys_src = np.unique(grid["y"])          # [src_size]
+
+    x_new = np.linspace(xs_src[0], xs_src[-1], target_size)
+    y_new = np.linspace(ys_src[0], ys_src[-1], target_size)
+    X2d, Y2d = np.meshgrid(x_new, y_new)  # both [target_size, target_size]
+
+    result: dict[str, np.ndarray] = {
+        "x": X2d.ravel().astype(np.float64),
+        "y": Y2d.ravel().astype(np.float64),
+    }
+    query_pts = np.stack([Y2d.ravel(), X2d.ravel()], axis=1)  # (y, x) for RegularGridInterp
+    for field in ("u", "v", "p"):
+        F2d = grid[field].reshape(src_size, src_size)   # [ny_src, nx_src]
+        interp = scipy.interpolate.RegularGridInterpolator(
+            (ys_src, xs_src), F2d,
+            method="linear", bounds_error=False, fill_value=None,
+        )
+        result[field] = interp(query_pts).astype(np.float64)
+    return result
+
+
 def sample_interior_indices(
     rng: np.random.Generator, grid_size: int, n: int
 ) -> np.ndarray:
@@ -125,12 +166,17 @@ class LDCDataset:
     ) -> None:
         """What: Load all .mat files, sample sensors, build branch vectors, split data."""
         rng = np.random.default_rng(seed)
-        grids = [load_ldc_mat(Path(p)) for p in mat_paths]
-        # Use minimum n_pts across all cases so indices are valid for every case.
-        # Why: mat files may have inconsistent grid sizes (e.g., Re4000 is 256×256
-        #      while Re3000/Re5000 are 257×257); using min avoids out-of-bounds indexing.
-        n_pts = min(len(g["x"]) for g in grids)
-        grid_size = int(round(n_pts ** 0.5))
+        raw_grids = [load_ldc_mat(Path(p)) for p in mat_paths]
+        # Align all grids to the largest grid_size via bilinear interpolation.
+        # Why: mat files may have inconsistent resolutions (e.g., Re4000 is 256×256 while
+        #      Re3000/Re5000 are 257×257). A flat_index has different (row, col) meanings
+        #      under different ncols, so sharing sensor/trunk indices across grids requires
+        #      a uniform coordinate frame. Upsampling the smaller grid preserves boundary
+        #      values exactly (linspace endpoints match) and introduces negligible error
+        #      (~O(h²) bilinear residual on a smooth laminar flow field).
+        n_pts_max = max(len(g["x"]) for g in raw_grids)
+        grid_size = int(round(n_pts_max ** 0.5))
+        grids = [_resize_grid(g, grid_size) for g in raw_grids]
 
         # Sensor locations (shared across all Re)
         self.sensor_interior = sample_interior_indices(rng, grid_size, num_interior_sensors)
@@ -164,6 +210,7 @@ class LDCDataset:
         self.branch_all = np.stack(branch_list, axis=0).astype(np.float32)
 
         # Train / val split per Re (same random split for all Re)
+        n_pts = grid_size * grid_size
         all_idx = np.arange(n_pts)
         rng.shuffle(all_idx)
         n_train = int(len(all_idx) * train_ratio)
@@ -177,6 +224,9 @@ class LDCDataset:
 
         Why: Shared trunk-building logic between train sampling and full-val evaluation;
              eliminates duplication and keeps each public method focused on index selection.
+             All grids are aligned to the same resolution by __init__ (via _resize_grid),
+             so grids[0]["x/y"] is identical to any other grid's x/y — using it for the
+             shared trunk is safe and avoids per-Re coordinate divergence.
 
         Returns:
             trunk_pts: [len(idx)*3, 3]        — (x, y, c) rows, c cycles 0/1/2

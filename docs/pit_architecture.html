@@ -1,0 +1,1949 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PiT Cross-Attention Operator — Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+
+<style>
+/* ──────────────────────────────────────────
+   Theme tokens
+────────────────────────────────────────── */
+:root {
+  --transition: 0.28s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* DARK — blueprint */
+[data-theme="dark"] {
+  --bg:           #0a0c10;
+  --bg-alt:       #080a0e;
+  --surface:      #111318;
+  --surface2:     #0d0f14;
+  --border:       #1e2330;
+  --border-mid:   #252d42;
+  --border-hi:    #2e3550;
+  --accent:       #4af0c4;
+  --accent2:      #f0a24a;
+  --accent3:      #a24af0;
+  --accent4:      #4a8ff0;
+  --text:         #c8d0e0;
+  --text-dim:     #4a5470;
+  --text-mid:     #8090b0;
+  --text-hi:      #e8f0ff;
+  --grid-line:    rgba(78,140,255,0.04);
+  --tag-bg:       rgba(255,255,255,0.04);
+  --badge-bg:     rgba(255,255,255,0.04);
+  --formula-bg:   rgba(255,255,255,0.02);
+  --hp-bg:        #0d0f14;
+  --row-div:      rgba(255,255,255,0.03);
+  --shadow:       none;
+  --shadow-card:  none;
+  --font-head:    'IBM Plex Mono', monospace;
+  --font-body:    'IBM Plex Sans', sans-serif;
+  --font-mono:    'IBM Plex Mono', monospace;
+}
+
+/* LIGHT — liquid.ai / onnx inspired */
+[data-theme="light"] {
+  --bg:           #f5f6f8;
+  --bg-alt:       #eef0f4;
+  --surface:      #ffffff;
+  --surface2:     #f9fafb;
+  --border:       #e4e7ef;
+  --border-mid:   #d0d5e4;
+  --border-hi:    #bec5d6;
+  --accent:       #0aa87a;
+  --accent2:      #d97706;
+  --accent3:      #7c3aed;
+  --accent4:      #2563eb;
+  --text:         #374151;
+  --text-dim:     #9ca3b8;
+  --text-mid:     #6b7280;
+  --text-hi:      #111827;
+  --grid-line:    rgba(37,99,235,0.04);
+  --tag-bg:       rgba(0,0,0,0.04);
+  --badge-bg:     rgba(37,99,235,0.06);
+  --formula-bg:   rgba(37,99,235,0.03);
+  --hp-bg:        #f9fafb;
+  --row-div:      rgba(0,0,0,0.04);
+  --shadow:       0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-card:  0 1px 4px rgba(0,0,0,0.07);
+  --font-head:    'Plus Jakarta Sans', sans-serif;
+  --font-body:    'Plus Jakarta Sans', sans-serif;
+  --font-mono:    'DM Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html {
+  transition: background var(--transition), color var(--transition);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-head);
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition: background var(--transition), color var(--transition);
+}
+
+/* grid background */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity var(--transition);
+}
+[data-theme="light"] body::before { opacity: 0.6; }
+
+.page {
+  position: relative;
+  z-index: 1;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 48px 32px;
+}
+
+/* ──────────────────────────────────────────
+   Theme Toggle
+────────────────────────────────────────── */
+.theme-toggle {
+  position: fixed;
+  top: 24px;
+  right: 28px;
+  z-index: 100;
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--border-hi);
+  border-radius: 24px;
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-mid);
+  letter-spacing: 0.05em;
+  transition: background var(--transition), border-color var(--transition),
+              color var(--transition), box-shadow var(--transition);
+  box-shadow: var(--shadow-card);
+  user-select: none;
+}
+.theme-toggle:hover {
+  border-color: var(--accent4);
+  color: var(--text-hi);
+}
+.toggle-icon {
+  font-size: 13px;
+  transition: transform 0.4s ease;
+}
+[data-theme="light"] .toggle-icon { transform: rotate(180deg); }
+
+/* ──────────────────────────────────────────
+   Header
+────────────────────────────────────────── */
+.header {
+  margin-bottom: 56px;
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+[data-theme="dark"] .header {
+  border-left: 3px solid var(--accent);
+  padding-left: 20px;
+}
+[data-theme="light"] .header {
+  border-left: none;
+  padding-left: 0;
+}
+[data-theme="light"] .header::before {
+  content: '';
+  display: block;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, var(--accent4) 0%, var(--accent) 100%);
+  border-radius: 2px;
+  margin-right: 20px;
+  min-height: 60px;
+  flex-shrink: 0;
+}
+.header-inner { flex: 1; }
+.header-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.25em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  transition: color var(--transition);
+}
+[data-theme="light"] .header-tag {
+  color: var(--accent4);
+  font-weight: 500;
+}
+.header h1 {
+  font-family: var(--font-head);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-hi);
+  letter-spacing: -0.02em;
+  transition: color var(--transition);
+}
+[data-theme="light"] .header h1 {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #111827 0%, #374151 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.header p {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 6px;
+  font-family: var(--font-body);
+  transition: color var(--transition);
+}
+[data-theme="light"] .header p {
+  color: var(--text-mid);
+  font-weight: 400;
+}
+
+/* ──────────────────────────────────────────
+   Section labels
+────────────────────────────────────────── */
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: color var(--transition);
+}
+.section-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  transition: background var(--transition);
+}
+[data-theme="light"] .section-label {
+  color: var(--text-mid);
+  font-weight: 500;
+  letter-spacing: 0.15em;
+}
+
+/* ──────────────────────────────────────────
+   Shared diagram containers
+────────────────────────────────────────── */
+.diagram-section { margin-bottom: 64px; }
+
+.arch-diagram, .flow-diagram {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 40px;
+  position: relative;
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+[data-theme="light"] .arch-diagram,
+[data-theme="light"] .flow-diagram {
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+/* ──────────────────────────────────────────
+   Model Architecture
+────────────────────────────────────────── */
+.module-box {
+  border: 1px solid var(--border-hi);
+  border-radius: 3px;
+  padding: 16px;
+  position: relative;
+  background: var(--bg);
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+[data-theme="light"] .module-box {
+  background: var(--surface);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+  border-color: var(--border);
+}
+
+.module-box.sensor { border-color: var(--accent4); }
+.module-box.query  { border-color: var(--accent3); }
+.module-box.cross  { border-color: var(--accent); border-width: 2px; }
+.module-box.output { border-color: var(--accent2); }
+
+[data-theme="light"] .module-box.sensor {
+  border-color: var(--border);
+  border-top: 3px solid var(--accent4);
+}
+[data-theme="light"] .module-box.query {
+  border-color: var(--border);
+  border-top: 3px solid var(--accent3);
+}
+[data-theme="light"] .module-box.cross {
+  border-color: var(--border);
+  border-top: 3px solid var(--accent);
+  border-width: 1px;
+  border-top-width: 3px;
+}
+[data-theme="light"] .module-box.output {
+  border-color: var(--border);
+  border-top: 3px solid var(--accent2);
+}
+
+.module-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  transition: color var(--transition);
+}
+.sensor .module-tag { color: var(--accent4); }
+.query  .module-tag { color: var(--accent3); }
+.cross  .module-tag { color: var(--accent);  }
+.output .module-tag { color: var(--accent2); }
+
+.module-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-hi);
+  margin-bottom: 10px;
+  font-family: var(--font-head);
+  transition: color var(--transition);
+}
+[data-theme="light"] .module-title { font-size: 13px; }
+
+.module-detail {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.7;
+  font-family: var(--font-mono);
+  transition: color var(--transition);
+}
+[data-theme="light"] .module-detail {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-mid);
+}
+.module-detail .hi {
+  color: var(--text);
+  transition: color var(--transition);
+}
+[data-theme="light"] .module-detail .hi { color: var(--text-hi); }
+
+.shape-badge {
+  display: inline-block;
+  background: var(--badge-bg);
+  border: 1px solid var(--border-hi);
+  border-radius: 2px;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 8px;
+  transition: all var(--transition);
+}
+[data-theme="light"] .shape-badge {
+  background: rgba(37,99,235,0.06);
+  border-color: rgba(37,99,235,0.15);
+  color: var(--accent4);
+  border-radius: 4px;
+}
+
+/* arrows */
+.arrow-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.arrow-line {
+  width: 100%;
+  height: 1px;
+  background: var(--border-hi);
+  position: relative;
+  transition: background var(--transition);
+}
+.arrow-line::after {
+  content: '▶';
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+  color: var(--border-hi);
+  transition: color var(--transition);
+}
+.arrow-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+/* input boxes */
+.input-box {
+  border: 1px dashed var(--border-hi);
+  border-radius: 3px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.01);
+  transition: all var(--transition);
+}
+[data-theme="light"] .input-box {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  border-style: dashed;
+}
+.input-box .input-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  margin-bottom: 3px;
+  transition: color var(--transition);
+}
+[data-theme="light"] .input-box .input-name { color: var(--text-hi); font-weight: 500; }
+.input-box .input-shape {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: color var(--transition);
+}
+[data-theme="light"] .input-box .input-shape { color: var(--text-mid); }
+
+/* cross-attention inner */
+.cross-inner {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cross-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  transition: color var(--transition);
+}
+.cross-row .role {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  padding: 2px 4px;
+  border-radius: 2px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+.role.q  { background: rgba(162,74,240,0.2); color: var(--accent3); }
+.role.kv { background: rgba(74,143,240,0.2); color: var(--accent4); }
+[data-theme="light"] .role.q  { background: rgba(124,58,237,0.1); border-radius: 4px; }
+[data-theme="light"] .role.kv { background: rgba(37,99,235,0.1); border-radius: 4px; }
+
+/* ──────────────────────────────────────────
+   Module step list (mstep-*)
+────────────────────────────────────────── */
+.module-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 8px;
+}
+.mstep {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--row-div);
+}
+.mstep.mstep-final { border-bottom: none; }
+.mstep.mstep-inject { background: rgba(240,162,74,.03); border-radius: 3px; padding: 3px 5px; margin: 0 -5px; border-bottom: none; }
+.mstep-n {
+  font-size: 9px;
+  color: var(--text-dim);
+  min-width: 18px;
+  text-align: right;
+  flex-shrink: 0;
+  font-weight: 600;
+  letter-spacing: .05em;
+  transition: color var(--transition);
+}
+.mstep-body { display: flex; align-items: baseline; gap: 5px; flex-wrap: nowrap; }
+.mstep-op   { color: var(--text); font-weight: 500; white-space: nowrap; transition: color var(--transition); }
+.mstep-arr  { color: var(--text-dim); opacity: .5; }
+.mstep-shape{ color: var(--text-dim); font-size: 9.5px; white-space: nowrap; transition: color var(--transition); }
+.mstep-note { font-size: 8.5px; padding: 0 5px; border-radius: 2px; white-space: nowrap; }
+.mstep-note.teal   { color: var(--accent); background: rgba(74,240,196,.08); }
+.mstep-note.orange { color: var(--accent2); background: rgba(240,162,74,.08); }
+[data-theme="light"] .mstep-op    { color: var(--text-hi); }
+[data-theme="light"] .mstep-shape { color: var(--text-mid); }
+
+/* ──────────────────────────────────────────
+   Pipeline diagram (pe-*)
+────────────────────────────────────────── */
+.pe-pipeline { display:flex; flex-direction:column; gap:0; margin-bottom:32px; overflow-x:auto; }
+.pe-section  { display:flex; flex-direction:column; gap:8px; padding:14px 0 10px; }
+.pe-header   { display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:10px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; opacity:.85; }
+.pe-hbar     { display:inline-block; width:3px; height:14px; border-radius:2px; flex-shrink:0; }
+.pe-row      { display:flex; align-items:center; flex-wrap:nowrap; gap:0; }
+
+.pe-step {
+  display:flex; flex-direction:column; gap:3px;
+  padding:8px 12px; border-radius:3px;
+  border:1px solid var(--border-mid);
+  background:rgba(255,255,255,.015);
+  min-width:90px; flex-shrink:0;
+  transition:all var(--transition);
+}
+[data-theme="light"] .pe-step { background:var(--surface2); border-radius:6px; box-shadow:var(--shadow-card); }
+.pe-step.pe-blue   { border-color:rgba(74,143,240,.45); }
+.pe-step.pe-teal   { border-color:rgba(74,240,196,.45); }
+.pe-step.pe-purple { border-color:rgba(162,74,240,.45); }
+.pe-step.pe-hi     { border-color:var(--accent4); background:rgba(74,143,240,.05); }
+.pe-step.pe-small  { min-width:80px; padding:6px 10px; }
+.pe-step.pe-re-inject { border-color:var(--accent2) !important; background:rgba(240,162,74,.04) !important; }
+
+.pe-op     { font-family:var(--font-mono); font-size:11px; font-weight:500; color:var(--text-hi); white-space:nowrap; transition:color var(--transition); }
+.pe-shape  { font-family:var(--font-mono); font-size:9.5px; color:var(--text-dim); white-space:nowrap; transition:color var(--transition); }
+.pe-detail { font-family:var(--font-mono); font-size:9px; color:var(--text-dim); opacity:.7; white-space:nowrap; transition:color var(--transition); }
+.pe-detail.pe-orange { color:var(--accent2); opacity:.9; }
+.pe-shared { font-family:var(--font-mono); font-size:9px; color:var(--accent); font-weight:600; white-space:nowrap; }
+.pe-re-tag { font-family:var(--font-mono); font-size:8px; font-weight:700; color:var(--accent2); letter-spacing:.1em; text-transform:uppercase; background:rgba(240,162,74,.14); padding:1px 5px; border-radius:2px; align-self:flex-start; margin-bottom:2px; }
+
+.pe-arr        { font-size:14px; padding:0 6px; opacity:.6; flex-shrink:0; align-self:center; font-family:var(--font-mono); transition:color var(--transition); }
+.pe-arr-blue   { color:var(--accent4); opacity:.7; }
+.pe-arr-purple { color:var(--accent3); opacity:.7; }
+.pe-arr-orange { color:var(--accent2); opacity:.8; }
+
+.pe-role-badge { width:38px; height:38px; border-radius:50%; border:2px solid; display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:12px; font-weight:700; flex-shrink:0; transition:all var(--transition); }
+.pe-kv { border-color:var(--accent4); color:var(--accent4); }
+.pe-q  { border-color:var(--accent3); color:var(--accent3); }
+
+.pe-input-stack, .pe-encode-stack { display:flex; flex-direction:column; gap:4px; flex-shrink:0; }
+
+/* Shared B connector */
+.pe-sharedB       { display:flex; align-items:center; padding-left:220px; height:24px; }
+.pe-sharedB-line  { display:flex; flex-direction:column; align-items:center; gap:1px; }
+.pe-sharedB-track { width:1px; height:8px; background:repeating-linear-gradient(to bottom, var(--accent) 0,var(--accent) 3px,transparent 3px,transparent 6px); opacity:.5; }
+.pe-sharedB-label { font-family:var(--font-mono); font-size:8.5px; color:var(--accent); opacity:.75; letter-spacing:.05em; white-space:nowrap; }
+
+/* CrossAttention block */
+.pe-cross-section   { display:flex; flex-direction:column; gap:8px; padding-top:16px; border-top:1px solid var(--border); margin-top:8px; }
+.pe-cross-converge  { display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:11px; }
+.pe-kv-tag  { color:var(--accent4); font-weight:700; }
+.pe-q-tag   { color:var(--accent3); font-weight:700; }
+.pe-shape-sm{ color:var(--text-dim); font-size:9.5px; }
+.pe-plus    { color:var(--text-dim); }
+.pe-down-arr{ color:var(--text-dim); margin-left:6px; }
+
+.pe-cross-block {
+  border:1px solid var(--border-mid); border-radius:4px;
+  padding:14px 16px;
+  background:rgba(74,240,196,.025);
+  transition:all var(--transition);
+}
+[data-theme="light"] .pe-cross-block { background:var(--surface2); border-radius:8px; border-color:var(--border); }
+.pe-cross-label { font-family:var(--font-mono); font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); margin-bottom:10px; }
+.pe-cross-row   { display:flex; align-items:center; flex-wrap:nowrap; gap:0; }
+
+.pe-cstep {
+  padding:8px 14px; border:1px solid var(--border-mid); border-radius:3px;
+  font-family:var(--font-mono); font-size:11px; color:var(--text);
+  line-height:1.4; flex-shrink:0; background:rgba(255,255,255,.015);
+  text-align:center; white-space:nowrap;
+  transition:all var(--transition);
+}
+[data-theme="light"] .pe-cstep { background:var(--surface); border-radius:6px; box-shadow:var(--shadow-card); border-color:var(--border); }
+.pe-cstep.pe-orange { border-color:rgba(240,162,74,.5); color:var(--accent2); background:rgba(240,162,74,.04); }
+.pe-cdetail { font-size:9px; color:var(--text-dim); display:block; }
+.pe-carr    { font-size:14px; color:var(--accent); padding:0 8px; opacity:.6; flex-shrink:0; }
+
+.pe-out-box   { padding:8px 16px; border:2px solid var(--accent2); border-radius:3px; background:rgba(240,162,74,.06); text-align:center; flex-shrink:0; transition:all var(--transition); }
+[data-theme="light"] .pe-out-box { border-radius:6px; }
+.pe-out-label { font-family:var(--font-mono); font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--accent2); margin-bottom:3px; }
+.pe-out-shape { font-family:var(--font-mono); font-size:12px; font-weight:600; color:var(--accent2); }
+
+/* ──────────────────────────────────────────
+   Training Flow
+────────────────────────────────────────── */
+.flow-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 32px;
+}
+
+.flow-col-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+  transition: color var(--transition), border-color var(--transition);
+}
+[data-theme="light"] .flow-col-title {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+}
+.col-data  .flow-col-title { color: var(--accent4); }
+.col-phys  .flow-col-title { color: var(--accent);  }
+.col-opt   .flow-col-title { color: var(--accent2); }
+
+.flow-step {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+  position: relative;
+}
+.step-num {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  margin-top: 2px;
+  transition: all var(--transition);
+}
+.col-data  .step-num { background: rgba(74,143,240,0.15); color: var(--accent4); border: 1px solid rgba(74,143,240,0.3); }
+.col-phys  .step-num { background: rgba(74,240,196,0.12); color: var(--accent);  border: 1px solid rgba(74,240,196,0.3); }
+.col-opt   .step-num { background: rgba(240,162,74,0.12); color: var(--accent2); border: 1px solid rgba(240,162,74,0.3); }
+
+[data-theme="light"] .col-data  .step-num { background: rgba(37,99,235,0.08); border-color: rgba(37,99,235,0.2); }
+[data-theme="light"] .col-phys  .step-num { background: rgba(10,168,122,0.08); border-color: rgba(10,168,122,0.2); }
+[data-theme="light"] .col-opt   .step-num { background: rgba(217,119,6,0.08); border-color: rgba(217,119,6,0.2); }
+
+.step-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-hi);
+  margin-bottom: 3px;
+  font-family: var(--font-head);
+  transition: color var(--transition);
+}
+[data-theme="light"] .step-title { font-size: 12px; }
+.step-desc {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  font-family: var(--font-body);
+  transition: color var(--transition);
+}
+[data-theme="light"] .step-desc { color: var(--text-mid); }
+.step-code {
+  display: inline-block;
+  background: var(--tag-bg);
+  border: 1px solid var(--border-hi);
+  border-radius: 2px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text);
+  margin-top: 4px;
+  transition: all var(--transition);
+}
+[data-theme="light"] .step-code {
+  background: var(--surface2);
+  border-color: var(--border-mid);
+  color: var(--accent4);
+  border-radius: 4px;
+}
+
+/* loss formula */
+.loss-formula {
+  margin-top: 32px;
+  padding: 20px 24px;
+  background: var(--formula-bg);
+  border: 1px solid var(--border-hi);
+  border-radius: 3px;
+  transition: all var(--transition);
+}
+[data-theme="light"] .loss-formula {
+  background: linear-gradient(135deg, rgba(37,99,235,0.03) 0%, rgba(10,168,122,0.03) 100%);
+  border-radius: 8px;
+  border-color: var(--border);
+}
+.loss-formula-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  transition: color var(--transition);
+}
+[data-theme="light"] .loss-formula-title { color: var(--text-mid); font-weight: 500; }
+.loss-eq {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-hi);
+  line-height: 2;
+  transition: color var(--transition);
+}
+.w  { color: var(--text-dim); font-size: 11px; }
+.ld { color: var(--accent4); }
+.lp { color: var(--accent);  }
+.lb { color: var(--accent2); }
+.lg { color: var(--accent3); }
+
+/* hyperparams */
+.hp-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  margin-top: 32px;
+}
+.hp-card {
+  background: var(--hp-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 12px 14px;
+  transition: all var(--transition);
+}
+[data-theme="light"] .hp-card {
+  background: var(--surface2);
+  border-radius: 8px;
+  border-color: var(--border);
+  box-shadow: var(--shadow-card);
+}
+.hp-name {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  transition: color var(--transition);
+}
+[data-theme="light"] .hp-name { color: var(--text-mid); font-weight: 500; }
+.hp-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text-hi);
+  font-weight: 500;
+  transition: color var(--transition);
+}
+[data-theme="light"] .hp-value { font-weight: 600; }
+.hp-unit {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: 2px;
+  transition: color var(--transition);
+}
+
+/* ──────────────────────────────────────────
+   Detail cards
+────────────────────────────────────────── */
+.sensor-detail {
+  margin-top: 28px;
+  padding-top: 28px;
+  border-top: 1px solid var(--border);
+  transition: border-color var(--transition);
+}
+.detail-row {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+.detail-card {
+  flex: 1;
+  min-width: 200px;
+  background: var(--hp-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 14px 16px;
+  transition: all var(--transition);
+}
+[data-theme="light"] .detail-card {
+  background: var(--surface);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+}
+.detail-card-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  transition: color var(--transition);
+}
+[data-theme="light"] .detail-card-title {
+  color: var(--text-mid);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+}
+.detail-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--row-div);
+  gap: 12px;
+  font-family: var(--font-mono);
+  transition: border-color var(--transition);
+}
+.detail-item:last-child { border-bottom: none; }
+.detail-key {
+  color: var(--text-dim);
+  transition: color var(--transition);
+}
+[data-theme="light"] .detail-key { color: var(--text-mid); }
+.detail-val {
+  color: var(--text);
+  text-align: right;
+  transition: color var(--transition);
+}
+[data-theme="light"] .detail-val { color: var(--text-hi); font-weight: 500; }
+.detail-val.accent  { color: var(--accent);  }
+.detail-val.accent2 { color: var(--accent2); }
+.detail-val.accent3 { color: var(--accent3); }
+.detail-val.accent4 { color: var(--accent4); }
+
+/* ──────────────────────────────────────────
+   Footer
+────────────────────────────────────────── */
+.footer {
+  margin-top: 48px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  transition: all var(--transition);
+}
+
+/* ──────────────────────────────────────────
+   Inline arrow helpers
+────────────────────────────────────────── */
+.arr-blue { color: var(--accent4); }
+.arr-purple { color: var(--accent3); }
+.arr-teal { color: var(--accent); }
+.arr-orange { color: var(--accent2); }
+.arr-h1 { height: 1px; background: var(--accent4); transition: background var(--transition); }
+.arr-h2 { height: 1px; background: var(--accent3); transition: background var(--transition); }
+.arr-h3 { height: 1px; background: var(--accent2); transition: background var(--transition); }
+
+/* ──────────────────────────────────────────
+   SVG Charts
+────────────────────────────────────────── */
+.chart-wrap { margin-top: 32px; }
+.chart-title {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.15em;
+  text-transform: uppercase; color: var(--text-dim); margin-bottom: 12px;
+  transition: color var(--transition);
+}
+[data-theme="light"] .chart-title { color: var(--text-mid); font-weight: 500; }
+.chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+@media (max-width: 720px) { .chart-pair { grid-template-columns: 1fr; } }
+.chart-box {
+  background: var(--hp-bg); border: 1px solid var(--border); border-radius: 3px;
+  padding: 18px; transition: all var(--transition);
+}
+[data-theme="light"] .chart-box { background: var(--surface2); border-radius: 8px; box-shadow: var(--shadow-card); }
+.chart-box svg { width: 100%; height: auto; display: block; }
+.chart-box-title {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px;
+  transition: color var(--transition);
+}
+[data-theme="light"] .chart-box-title { color: var(--text-mid); font-weight: 500; }
+/* SVG primitives */
+.sv-axis  { stroke: var(--border-hi); stroke-width: 1; fill: none; }
+.sv-grid  { stroke: var(--border); stroke-width: 0.5; fill: none; stroke-dasharray: 3,3; }
+.sv-teal  { stroke: var(--accent);  stroke-width: 1.8; fill: none; }
+.sv-blue  { stroke: var(--accent4); stroke-width: 1.8; fill: none; }
+.sv-orange { stroke: var(--accent2); stroke-width: 1.5; fill: none; stroke-dasharray: 6,4; }
+.sv-purple { stroke: var(--accent3); stroke-width: 1.8; fill: none; }
+.sv-fill-teal   { fill: var(--accent);  opacity: 0.07; stroke: none; }
+.sv-fill-blue   { fill: var(--accent4); opacity: 0.07; stroke: none; }
+.sv-fill-purple { fill: var(--accent3); opacity: 0.07; stroke: none; }
+.sv-fill-blue   { fill: var(--accent4); opacity: 0.08; stroke: none; }
+.sv-dot-blue    { fill: var(--accent4); stroke: var(--hp-bg); stroke-width: 1.5; }
+.sv-dot-teal   { fill: var(--accent);  stroke: var(--hp-bg); stroke-width: 1.5; }
+.sv-dot-blue   { fill: var(--accent4); stroke: var(--hp-bg); stroke-width: 1.5; }
+.sv-dot-orange { fill: var(--accent2); stroke: var(--hp-bg); stroke-width: 1.5; }
+.sv-dot-purple { fill: var(--accent3); stroke: var(--hp-bg); stroke-width: 1.5; }
+.sv-label { font-family: var(--font-mono); font-size: 9px; fill: var(--text-dim); }
+.sv-legend { font-family: var(--font-mono); font-size: 9px; fill: var(--text-mid); }
+
+/* ──────────────────────────────────────────
+   Sensor Map
+────────────────────────────────────────── */
+.sensor-map-wrap { margin-top: 10px; }
+.sensor-map-wrap svg { width: 100%; height: auto; display: block; }
+.sv-domain { fill: none; stroke: var(--border-hi); stroke-width: 1.5; }
+.sv-lid-line { stroke: var(--accent2); stroke-width: 2.5; stroke-dasharray: none; }
+.sv-int { fill: var(--accent4); }
+.sv-bnd { fill: var(--accent2); }
+.sv-bnd-lid { fill: var(--accent); }
+
+/* ──────────────────────────────────────────
+   Annotation strip
+────────────────────────────────────────── */
+.anno-strip {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;
+  margin-top: 28px; padding-top: 22px;
+  border-top: 1px dashed var(--border-mid);
+  transition: border-color var(--transition);
+}
+.anno-item { display: flex; flex-direction: column; gap: 5px; }
+.anno-marker {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--accent3);
+  letter-spacing: 0.05em; font-weight: 600;
+  transition: color var(--transition);
+}
+.anno-marker::before {
+  content: ''; display: inline-block; width: 20px; height: 1px;
+  background: var(--accent3); flex-shrink: 0;
+}
+.anno-desc {
+  font-family: var(--font-body); font-size: 10.5px; color: var(--text-dim);
+  line-height: 1.55; padding-left: 28px; transition: color var(--transition);
+}
+[data-theme="light"] .anno-desc { color: var(--text-mid); }
+
+/* ──────────────────────────────────────────
+   Comparison Table
+────────────────────────────────────────── */
+.comp-wrap { margin-top: 32px; overflow-x: auto; }
+.comp-title {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.15em;
+  text-transform: uppercase; color: var(--text-dim); margin-bottom: 12px;
+  transition: color var(--transition);
+}
+[data-theme="light"] .comp-title { color: var(--text-mid); font-weight: 500; }
+.comp-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 11px; }
+.comp-table th {
+  padding: 8px 16px; text-align: left; font-size: 9px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-dim);
+  border-bottom: 1px solid var(--border-hi); font-weight: 500;
+}
+.comp-table td {
+  padding: 9px 16px; border-bottom: 1px solid var(--row-div);
+  color: var(--text); transition: background var(--transition), color var(--transition);
+}
+.comp-table tr:hover td { background: var(--tag-bg); }
+.comp-table .better { color: var(--accent); font-weight: 600; }
+.comp-table .worse  { color: var(--text-dim); }
+.comp-table .na     { color: var(--text-dim); opacity: 0.5; }
+.comp-table .delta-good { color: var(--accent); font-size: 10px; }
+.comp-table .delta-bad  { color: var(--accent2); font-size: 10px; }
+[data-theme="light"] .comp-table th { color: var(--text-mid); }
+[data-theme="light"] .comp-table td { color: var(--text-hi); }
+
+/* ──────────────────────────────────────────
+   Step Timeline
+────────────────────────────────────────── */
+.tl-wrap { margin-top: 32px; }
+.tl-title {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.15em;
+  text-transform: uppercase; color: var(--text-dim); margin-bottom: 12px;
+  transition: color var(--transition);
+}
+[data-theme="light"] .tl-title { color: var(--text-mid); font-weight: 500; }
+.tl-wrap svg { width: 100%; height: auto; display: block; }
+.tl-track  { stroke: var(--border-mid); stroke-width: 2; fill: none; }
+.tl-track2 { stroke: var(--border-hi); stroke-width: 1.5; fill: none; stroke-dasharray: 4,3; }
+.tl-node-teal   { fill: var(--accent);  stroke: var(--surface); stroke-width: 2; }
+.tl-node-blue   { fill: var(--accent4); stroke: var(--surface); stroke-width: 2; }
+.tl-node-orange { fill: var(--accent2); stroke: var(--surface); stroke-width: 2; }
+.tl-node-dim    { fill: var(--border-mid); stroke: var(--surface); stroke-width: 2; }
+.tl-label { font-family: var(--font-mono); font-size: 9px; fill: var(--text-dim); }
+.tl-val-teal  { font-family: var(--font-mono); font-size: 10px; font-weight: 600; fill: var(--accent); }
+.tl-val-orange { font-family: var(--font-mono); font-size: 10px; font-weight: 600; fill: var(--accent2); }
+.tl-run-label { font-family: var(--font-mono); font-size: 8.5px; fill: var(--text-dim); letter-spacing: 0.05em; text-transform: uppercase; }
+.tl-lr-mark { stroke: var(--accent3); stroke-width: 1; stroke-dasharray: 2,2; fill: none; opacity: 0.6; }
+
+/* ──────────────────────────────────────────
+   Code Block
+────────────────────────────────────────── */
+.code-block {
+  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+  font-family: var(--font-mono); font-size: 11px; transition: all var(--transition);
+}
+[data-theme="light"] .code-block { border-radius: 8px; box-shadow: var(--shadow-card); }
+.code-header {
+  background: var(--surface2); border-bottom: 1px solid var(--border);
+  padding: 8px 16px; display: flex; align-items: center; gap: 10px;
+  font-size: 10px; color: var(--text-dim); letter-spacing: 0.04em;
+  transition: all var(--transition);
+}
+[data-theme="light"] .code-header { background: var(--bg-alt); }
+.code-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.cd-r { background: #ff5f57; } .cd-y { background: #ffbd2e; } .cd-g { background: #28c941; }
+.code-filename { flex: 1; text-align: center; color: var(--text-dim); }
+.code-body {
+  background: var(--bg); padding: 12px 0; overflow-x: auto; line-height: 1.75;
+  transition: background var(--transition);
+}
+[data-theme="light"] .code-body { background: #fafbfc; }
+.code-line { display: flex; padding: 0; }
+.code-line:hover { background: var(--tag-bg); }
+.ln {
+  width: 36px; min-width: 36px; text-align: right; padding: 0 12px 0 0;
+  color: var(--text-dim); font-size: 10px; user-select: none; opacity: 0.45;
+}
+.ct { flex: 1; padding: 0 16px; color: var(--text); white-space: pre; }
+.tkw { color: var(--accent3); }
+.tkf { color: var(--accent4); }
+.tks { color: var(--accent2); }
+.tkn { color: var(--accent); }
+.tkc { color: var(--text-dim); font-style: italic; }
+.tka { color: var(--text-hi); }
+.tkt { color: var(--accent); opacity: 0.85; }
+
+/* result badge */
+.result-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(74,240,196,0.08);
+  border: 1px solid rgba(74,240,196,0.2);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent);
+  transition: all var(--transition);
+}
+[data-theme="light"] .result-badge {
+  background: rgba(10,168,122,0.08);
+  border-color: rgba(10,168,122,0.2);
+  border-radius: 6px;
+}
+</style>
+</head>
+<body>
+
+<!-- Toggle Button -->
+<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+  <span class="toggle-icon">◑</span>
+  <span id="toggle-label">light</span>
+</button>
+
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-inner">
+      <div class="header-tag">Technical Reference — 2026-03-22</div>
+      <h1>PiT Cross-Attention Operator</h1>
+      <p>Physics-Informed Transformer for Multi-Re Lid-Driven Cavity Flow &nbsp;·&nbsp; Steady-State Operator Learning</p>
+    </div>
+  </div>
+
+  <!-- ── Section 1: Model Architecture ── -->
+  <div class="diagram-section">
+    <div class="section-label">01 &nbsp; Model Architecture</div>
+
+    <div class="arch-diagram">
+
+      <!-- Top-level flow -->
+      <div style="display:flex; gap:0; align-items:stretch; position:relative;">
+
+        <!-- Inputs stack -->
+        <div style="display:flex; flex-direction:column; gap:10px; min-width:170px; justify-content:center;">
+          <div class="input-box">
+            <div class="input-name">sensors</div>
+            <div class="input-shape">[N<sub>s</sub>, 5] &nbsp; (x,y,u,v,p)</div>
+          </div>
+          <div class="input-box" style="border-color:var(--accent2);">
+            <div class="input-name" style="color:var(--accent2);">re_norm</div>
+            <div class="input-shape">float &nbsp;—&nbsp; (Re−4000)/816</div>
+          </div>
+          <div style="height:8px;"></div>
+          <div class="input-box" style="border-color:var(--accent3);">
+            <div class="input-name" style="color:var(--accent3);">xy &nbsp;(query pts)</div>
+            <div class="input-shape">[N<sub>q</sub>, 2]</div>
+          </div>
+          <div class="input-box" style="border-color:var(--accent3);">
+            <div class="input-name" style="color:var(--accent3);">c &nbsp;(component)</div>
+            <div class="input-shape">[N<sub>q</sub>] &nbsp;— 0=u 1=v 2=p</div>
+          </div>
+        </div>
+
+        <!-- Arrow 1 -->
+        <div style="display:flex; flex-direction:column; gap:60px; padding:0 16px; align-items:center; width:56px; justify-content:center;">
+          <div style="width:100%; position:relative;">
+            <div class="arr-h1"></div>
+            <div style="position:absolute; right:-5px; top:-5px; font-size:9px;" class="arr-blue">▶</div>
+          </div>
+          <div style="height:8px;"></div>
+          <div style="width:100%; position:relative; margin-top:6px;">
+            <div class="arr-h2"></div>
+            <div style="position:absolute; right:-5px; top:-5px; font-size:9px;" class="arr-purple">▶</div>
+          </div>
+        </div>
+
+        <!-- Encoders stack -->
+        <div style="display:flex; flex-direction:column; gap:12px; min-width:240px;">
+
+          <!-- SensorEncoder -->
+          <div class="module-box sensor">
+            <div class="module-tag">encoder 1</div>
+            <div class="module-title">SensorEncoder</div>
+            <div class="module-steps">
+              <div class="mstep">
+                <span class="mstep-n">1</span>
+                <span class="mstep-body"><span class="mstep-op">RFF(x,y)</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>s</sub>, 128]</span><span class="mstep-note teal">shared B</span></span>
+              </div>
+              <div class="mstep">
+                <span class="mstep-n">2</span>
+                <span class="mstep-body"><span class="mstep-op">concat(u,v,p)</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>s</sub>, 131]</span></span>
+              </div>
+              <div class="mstep">
+                <span class="mstep-n">3</span>
+                <span class="mstep-body"><span class="mstep-op">Linear(131→d)</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>s</sub>, d]</span></span>
+              </div>
+              <div class="mstep mstep-inject">
+                <span class="mstep-n" style="color:var(--accent2);">+</span>
+                <span class="mstep-body"><span class="mstep-op" style="color:var(--accent2);">prepend re_token</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>s</sub>+1, d]</span><span class="mstep-note orange">re_proj(re_norm)</span></span>
+              </div>
+              <div class="mstep mstep-final">
+                <span class="mstep-n">4</span>
+                <span class="mstep-body"><span class="mstep-op">TransformerEncoder × 2</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>s</sub>+1, d]</span></span>
+              </div>
+            </div>
+            <div class="shape-badge">out → <strong>KV</strong> &nbsp;[N<sub>s</sub>+1, 128]</div>
+          </div>
+
+          <!-- QueryEncoder -->
+          <div class="module-box query">
+            <div class="module-tag">encoder 2</div>
+            <div class="module-title">QueryEncoder</div>
+            <div class="module-steps">
+              <div class="mstep">
+                <span class="mstep-n">1a</span>
+                <span class="mstep-body"><span class="mstep-op">RFF(x,y)</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>q</sub>, 128]</span><span class="mstep-note teal">shared B</span></span>
+              </div>
+              <div class="mstep">
+                <span class="mstep-n">1b</span>
+                <span class="mstep-body"><span class="mstep-op">Embedding(c, 8)</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>q</sub>, 8]</span></span>
+              </div>
+              <div class="mstep">
+                <span class="mstep-n">2</span>
+                <span class="mstep-body"><span class="mstep-op">concat(1a, 1b)</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>q</sub>, 136]</span></span>
+              </div>
+              <div class="mstep mstep-final">
+                <span class="mstep-n">3</span>
+                <span class="mstep-body"><span class="mstep-op">Linear(136→d)</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>q</sub>, d]</span></span>
+              </div>
+            </div>
+            <div class="shape-badge">out → <strong>Q</strong> &nbsp;[N<sub>q</sub>, 128]</div>
+          </div>
+        </div>
+
+        <!-- Arrow 2 -->
+        <div style="padding:0 16px; width:56px; display:flex; align-items:center;">
+          <div style="display:flex; flex-direction:column; gap:80px; align-items:center; width:100%;">
+            <div style="width:100%; position:relative;">
+              <div class="arr-h1"></div>
+              <div style="font-family:var(--font-mono); font-size:9px; color:var(--accent4); text-align:center; margin-top:3px; white-space:nowrap; font-weight:600;">K, V</div>
+              <div style="position:absolute; right:-5px; top:-5px; font-size:9px;" class="arr-blue">▶</div>
+            </div>
+            <div style="width:100%; position:relative;">
+              <div class="arr-h2"></div>
+              <div style="font-family:var(--font-mono); font-size:9px; color:var(--accent3); text-align:center; margin-top:3px; font-weight:600;">Q</div>
+              <div style="position:absolute; right:-5px; top:-5px; font-size:9px;" class="arr-purple">▶</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cross-Attention Operator -->
+        <div class="module-box cross" style="min-width:210px; display:flex; flex-direction:column; justify-content:center;">
+          <div class="module-tag">operator</div>
+          <div class="module-title">CrossAttention</div>
+          <div class="cross-inner" style="margin-bottom:10px;">
+            <div class="cross-row">
+              <span class="role kv">KV</span>
+              <span>sensor tokens &nbsp;[N<sub>s</sub>+1, d]</span>
+            </div>
+            <div class="cross-row">
+              <span class="role q">Q</span>
+              <span>query points &nbsp;[N<sub>q</sub>, d]</span>
+            </div>
+          </div>
+          <div class="module-steps" style="border-top:1px solid var(--border); padding-top:10px;">
+            <div class="mstep">
+              <span class="mstep-n">1</span>
+              <span class="mstep-body"><span class="mstep-op">MHA(d=128, h=4)</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>q</sub>, d]</span></span>
+            </div>
+            <div class="mstep">
+              <span class="mstep-n">2</span>
+              <span class="mstep-body"><span class="mstep-op">LayerNorm</span></span>
+            </div>
+            <div class="mstep">
+              <span class="mstep-n">3</span>
+              <span class="mstep-body"><span class="mstep-op">Linear(d→1)</span><span class="mstep-arr">→</span><span class="mstep-shape">[N<sub>q</sub>, 1]</span></span>
+            </div>
+            <div class="mstep mstep-final">
+              <span class="mstep-n">4</span>
+              <span class="mstep-body"><span class="mstep-op" style="color:var(--accent2);">×scale[c] + bias[c]</span><span class="mstep-note orange">ComponentScaler</span></span>
+            </div>
+          </div>
+          <div class="shape-badge" style="margin-top:8px;">out: [N<sub>q</sub>, 1]</div>
+        </div>
+
+        <!-- Arrow 3 -->
+        <div style="padding:0 16px; width:48px; display:flex; align-items:center;">
+          <div style="width:100%; position:relative;">
+            <div class="arr-h3"></div>
+            <div style="position:absolute; right:-5px; top:-5px; font-size:9px;" class="arr-orange">▶</div>
+          </div>
+        </div>
+
+        <!-- Output -->
+        <div class="module-box output" style="min-width:120px; display:flex; flex-direction:column; justify-content:center;">
+          <div class="module-tag">output</div>
+          <div class="module-title">Field Value</div>
+          <div class="module-detail">
+            u, v, or p<br>at query point
+          </div>
+          <div class="shape-badge">[N<sub>q</sub>, 1]</div>
+        </div>
+
+      </div>
+
+      <!-- Details row -->
+      <div class="sensor-detail">
+        <div class="detail-row">
+
+          <div class="detail-card">
+            <div class="detail-card-title">Model Config</div>
+            <div class="detail-item"><span class="detail-key">d_model</span><span class="detail-val accent">128</span></div>
+            <div class="detail-item"><span class="detail-key">nhead</span><span class="detail-val">4</span></div>
+            <div class="detail-item"><span class="detail-key">encoder_layers</span><span class="detail-val">2</span></div>
+            <div class="detail-item"><span class="detail-key">dim_feedforward</span><span class="detail-val">256</span></div>
+            <div class="detail-item"><span class="detail-key">rff_features</span><span class="detail-val accent4">64</span></div>
+            <div class="detail-item"><span class="detail-key">rff_sigma</span><span class="detail-val">5.0</span></div>
+            <div class="detail-item"><span class="detail-key">total params</span><span class="detail-val accent2">366,111</span></div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-card-title">Sensor Layout</div>
+            <div class="detail-item"><span class="detail-key">interior sensors</span><span class="detail-val accent4">80</span></div>
+            <div class="detail-item"><span class="detail-key">boundary sensors</span><span class="detail-val accent2">20</span></div>
+            <div class="detail-item"><span class="detail-key">total N<sub>s</sub></span><span class="detail-val">100</span></div>
+            <div class="detail-item"><span class="detail-key">kv sequence</span><span class="detail-val accent">101 tokens</span></div>
+            <!-- sensor map SVG -->
+            <div class="sensor-map-wrap">
+              <svg viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg" id="sensor-map-svg">
+                <!-- domain border -->
+                <rect x="10" y="10" width="200" height="200" class="sv-domain"/>
+                <!-- lid (moving top wall) marker -->
+                <line x1="10" y1="10" x2="210" y2="10" class="sv-lid-line"/>
+                <!-- boundary sensors: bottom (y=0) -->
+                <circle cx="30" cy="210" r="3" class="sv-bnd"/>
+                <circle cx="70" cy="210" r="3" class="sv-bnd"/>
+                <circle cx="110" cy="210" r="3" class="sv-bnd"/>
+                <circle cx="150" cy="210" r="3" class="sv-bnd"/>
+                <circle cx="190" cy="210" r="3" class="sv-bnd"/>
+                <!-- boundary sensors: top/lid (y=1) -->
+                <circle cx="30" cy="10" r="3" class="sv-bnd-lid"/>
+                <circle cx="70" cy="10" r="3" class="sv-bnd-lid"/>
+                <circle cx="110" cy="10" r="3" class="sv-bnd-lid"/>
+                <circle cx="150" cy="10" r="3" class="sv-bnd-lid"/>
+                <circle cx="190" cy="10" r="3" class="sv-bnd-lid"/>
+                <!-- boundary sensors: left (x=0) -->
+                <circle cx="10" cy="30"  r="3" class="sv-bnd"/>
+                <circle cx="10" cy="70"  r="3" class="sv-bnd"/>
+                <circle cx="10" cy="110" r="3" class="sv-bnd"/>
+                <circle cx="10" cy="150" r="3" class="sv-bnd"/>
+                <circle cx="10" cy="190" r="3" class="sv-bnd"/>
+                <!-- boundary sensors: right (x=1) -->
+                <circle cx="210" cy="30"  r="3" class="sv-bnd"/>
+                <circle cx="210" cy="70"  r="3" class="sv-bnd"/>
+                <circle cx="210" cy="110" r="3" class="sv-bnd"/>
+                <circle cx="210" cy="150" r="3" class="sv-bnd"/>
+                <circle cx="210" cy="190" r="3" class="sv-bnd"/>
+                <!-- 80 interior sensors: JS-generated, appended dynamically -->
+                <g id="interior-sensors"></g>
+                <!-- labels -->
+                <text x="110" y="225" class="sv-label" text-anchor="middle" font-size="8">80 interior (blue) · 20 boundary (orange/teal)</text>
+                <text x="110" y="5" class="sv-label" text-anchor="middle" font-size="7.5" fill="var(--accent2)">▶ lid (moving)</text>
+              </svg>
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-card-title">Shared RFF Matrix B</div>
+            <div class="detail-item"><span class="detail-key">shape</span><span class="detail-val accent4">[2, 64]</span></div>
+            <div class="detail-item"><span class="detail-key">storage</span><span class="detail-val">register_buffer</span></div>
+            <div class="detail-item"><span class="detail-key">trainable</span><span class="detail-val" style="color:#e06060;">No</span></div>
+            <div class="detail-item"><span class="detail-key">encoding</span><span class="detail-val">[sin, cos](2πzB)</span></div>
+            <div class="detail-item"><span class="detail-key">output dim</span><span class="detail-val">2×64 = 128</span></div>
+            <div class="detail-item" style="border-top:1px dashed var(--border-mid); margin-top:4px; padding-top:4px;">
+              <span class="detail-key" style="color:var(--accent);">shared by both encoders</span>
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-card-title">ComponentScaler</div>
+            <div class="detail-item"><span class="detail-key">component_scale</span><span class="detail-val accent3">nn.Parameter(3)</span></div>
+            <div class="detail-item"><span class="detail-key">component_bias</span><span class="detail-val accent3">nn.Parameter(3)</span></div>
+            <div class="detail-item"><span class="detail-key">init</span><span class="detail-val">ones / zeros</span></div>
+            <div class="detail-item"><span class="detail-key">apply</span><span class="detail-val">out × s[c] + b[c]</span></div>
+            <div class="detail-item" style="border-top:1px dashed var(--border-mid); margin-top:4px; padding-top:4px;">
+              <span class="detail-key" style="color:var(--accent);">handles u/v/p magnitude gap</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Annotation strip -->
+      <div class="anno-strip">
+        <div class="anno-item">
+          <div class="anno-marker">Shared B Matrix</div>
+          <div class="anno-desc">SensorEncoder 和 QueryEncoder <strong>共用同一個</strong> RFF 隨機矩陣 B（register_buffer），確保座標編碼空間一致，使 cross-attention 的 Q 和 KV 在相同特徵空間對齊。</div>
+        </div>
+        <div class="anno-item">
+          <div class="anno-marker">101 KV Tokens</div>
+          <div class="anno-desc">N<sub>s</sub>=100 感測器 token + 1 個 Re token（prepend），共 101 個 KV token 進入 cross-attention。Re token 攜帶 Reynolds number 資訊，使模型條件化於流場參數。</div>
+        </div>
+        <div class="anno-item">
+          <div class="anno-marker">ComponentScaler</div>
+          <div class="anno-desc">u、v、p 的數量級差異大（壓力 ~O(1)，速度 ~O(0.01)），ComponentScaler 為每個分量學習獨立的 scale 和 bias，初始化為 ones/zeros，訓練中自動調整。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 2: Training Flow ── -->
+  <div class="diagram-section">
+    <div class="section-label">02 &nbsp; Training Loop — Per Step</div>
+
+    <div class="flow-diagram">
+      <div class="flow-columns">
+
+        <div class="col-data">
+          <div class="flow-col-title">Data Loss &nbsp;L<sub>data</sub></div>
+          <div class="flow-step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <div class="step-title">Sample query points</div>
+              <div class="step-desc">從 train pool (52K pts) 隨機抽取</div>
+              <div class="step-code">n = 2048 pts</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <div class="step-title">Build trunk tensor</div>
+              <div class="step-desc">每點重複 3 次 (c=0,1,2)</div>
+              <div class="step-code">[2048×3, 3] = [6144, 3]</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">3</div>
+            <div class="step-body">
+              <div class="step-title">Forward × 3 Re cases</div>
+              <div class="step-desc">Re3000, Re4000, Re5000 各跑一次</div>
+              <div class="step-code">sensors_list[i], re_norm_list[i]</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">4</div>
+            <div class="step-body">
+              <div class="step-title">MSE vs. CFD reference</div>
+              <div class="step-desc">3 個 Re 的 MSE 取平均</div>
+              <div class="step-code">L_data = mean(MSE) / num_re</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-phys">
+          <div class="flow-col-title">Physics Loss &nbsp;L<sub>phys</sub></div>
+          <div class="flow-step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <div class="step-title">Sample collocation pts</div>
+              <div class="step-desc">uniform random in [0,1]²</div>
+              <div class="step-code">xy ∈ [0,1]² × 1024</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <div class="step-title">net.eval() — no dropout</div>
+              <div class="step-desc">attn_dropout 停用確保 autograd 穩定</div>
+              <div class="step-code">requires_grad=True on xy</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">3</div>
+            <div class="step-body">
+              <div class="step-title">NS residuals × 3 Re</div>
+              <div class="step-desc">steady_ns_residuals → ns_x, ns_y, cont</div>
+              <div class="step-code">∂u/∂x via autograd</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">4</div>
+            <div class="step-body">
+              <div class="step-title">BC + Gauge loss</div>
+              <div class="step-desc">wall BCs + pressure gauge (Re0 case)</div>
+              <div class="step-code">n_per_wall = 25 pts</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-opt">
+          <div class="flow-col-title">Optimization</div>
+          <div class="flow-step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <div class="step-title">Weighted total loss</div>
+              <div class="step-desc">4 損失加權合併（見下方公式）</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <div class="step-title">Backward pass</div>
+              <div class="step-desc">l_total.backward()</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">3</div>
+            <div class="step-body">
+              <div class="step-title">Gradient clipping</div>
+              <div class="step-desc">防止物理損失梯度爆炸</div>
+              <div class="step-code">max_grad_norm = 1.0</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="step-num">4</div>
+            <div class="step-body">
+              <div class="step-title">AdamW step + StepLR</div>
+              <div class="step-desc">lr × 0.9 every 1000 steps</div>
+              <div class="step-code">lr: 1e-3 → ~3.5e-4</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Loss formula -->
+      <div class="loss-formula">
+        <div class="loss-formula-title">Total Loss</div>
+        <div class="loss-eq">
+          L<sub>total</sub> &nbsp;=&nbsp;
+          <span class="w">w<sub>d</sub>·</span><span class="ld">L<sub>data</sub></span>
+          &nbsp;+&nbsp;
+          <span class="w">w<sub>p</sub>·</span><span class="lp">L<sub>phys</sub></span>
+          &nbsp;+&nbsp;
+          <span class="w">w<sub>bc</sub>·</span><span class="lb">L<sub>bc</sub></span>
+          &nbsp;+&nbsp;
+          <span class="w">w<sub>g</sub>·</span><span class="lg">L<sub>gauge</sub></span>
+          &nbsp;&nbsp;&nbsp;&nbsp;
+          <span style="font-size:11px; color:var(--text-dim);">
+            w<sub>d</sub>=1.0 &nbsp; w<sub>p</sub>=0.1 &nbsp; w<sub>bc</sub>=1.0 &nbsp; w<sub>g</sub>=1.0
+          </span>
+        </div>
+      </div>
+
+      <!-- Hyperparams -->
+      <div class="hp-grid">
+        <div class="hp-card">
+          <div class="hp-name">Iterations</div>
+          <div class="hp-value">10,000</div>
+        </div>
+        <div class="hp-card">
+          <div class="hp-name">Query pts / step</div>
+          <div class="hp-value">2,048</div>
+        </div>
+        <div class="hp-card">
+          <div class="hp-name">Physics pts</div>
+          <div class="hp-value">1,024</div>
+        </div>
+        <div class="hp-card">
+          <div class="hp-name">Learning rate</div>
+          <div class="hp-value">1e-3<span class="hp-unit">→ 3.5e-4</span></div>
+        </div>
+        <div class="hp-card">
+          <div class="hp-name">LR Schedule</div>
+          <div class="hp-value">StepLR<span class="hp-unit">×0.9/1k</span></div>
+        </div>
+      </div>
+
+      <!-- LR Scheduler Chart -->
+      <div class="chart-wrap">
+        <div class="chart-title">LR Scheduler — StepLR (step_size=1000, γ=0.9)</div>
+        <div class="chart-box">
+          <svg viewBox="0 0 520 185" xmlns="http://www.w3.org/2000/svg">
+            <!-- grid lines (horizontal) -->
+            <line x1="55" y1="34.4"  x2="462" y2="34.4"  class="sv-grid"/>
+            <line x1="55" y1="71.3"  x2="462" y2="71.3"  class="sv-grid"/>
+            <line x1="55" y1="108.2" x2="462" y2="108.2" class="sv-grid"/>
+            <line x1="55" y1="145.2" x2="462" y2="145.2" class="sv-grid"/>
+            <!-- axes -->
+            <line x1="55" y1="160" x2="462" y2="160" class="sv-axis"/>
+            <line x1="55" y1="25"  x2="55"  y2="160" class="sv-axis"/>
+            <!-- step decay marks (vertical) -->
+            <line x1="95.5"  y1="27" x2="95.5"  y2="160" class="sv-grid" stroke-dasharray="2,4" opacity="0.5"/>
+            <line x1="136"   y1="27" x2="136"   y2="160" class="sv-grid" stroke-dasharray="2,4" opacity="0.5"/>
+            <line x1="176.5" y1="27" x2="176.5" y2="160" class="sv-grid" stroke-dasharray="2,4" opacity="0.5"/>
+            <line x1="217"   y1="27" x2="217"   y2="160" class="sv-grid" stroke-dasharray="2,4" opacity="0.5"/>
+            <line x1="257.5" y1="27" x2="257.5" y2="160" class="sv-grid" stroke-dasharray="2,4" opacity="0.5"/>
+            <line x1="298"   y1="27" x2="298"   y2="160" class="sv-grid" stroke-dasharray="2,4" opacity="0.5"/>
+            <line x1="338.5" y1="27" x2="338.5" y2="160" class="sv-grid" stroke-dasharray="2,4" opacity="0.5"/>
+            <line x1="379"   y1="27" x2="379"   y2="160" class="sv-grid" stroke-dasharray="2,4" opacity="0.5"/>
+            <line x1="419.5" y1="27" x2="419.5" y2="160" class="sv-grid" stroke-dasharray="2,4" opacity="0.5"/>
+            <!-- staircase LR polyline -->
+            <polyline class="sv-teal" points="55,34.4 95.5,34.4 95.5,52.9 136,52.9 136,69.5 176.5,69.5 176.5,84.4 217,84.4 217,97.9 257.5,97.9 257.5,110.1 298,110.1 298,121.0 338.5,121.0 338.5,130.8 379,130.8 379,139.7 419.5,139.7 419.5,147.6 462,147.6"/>
+            <!-- dots at each decay -->
+            <circle cx="95.5"  cy="52.9"  r="3" class="sv-dot-teal"/>
+            <circle cx="136"   cy="69.5"  r="3" class="sv-dot-teal"/>
+            <circle cx="176.5" cy="84.4"  r="3" class="sv-dot-teal"/>
+            <circle cx="217"   cy="97.9"  r="3" class="sv-dot-teal"/>
+            <circle cx="257.5" cy="110.1" r="3" class="sv-dot-teal"/>
+            <circle cx="298"   cy="121.0" r="3" class="sv-dot-teal"/>
+            <circle cx="338.5" cy="130.8" r="3" class="sv-dot-teal"/>
+            <circle cx="379"   cy="139.7" r="3" class="sv-dot-teal"/>
+            <circle cx="419.5" cy="147.6" r="3" class="sv-dot-teal"/>
+            <!-- y-axis labels -->
+            <text x="48" y="38"    class="sv-label" text-anchor="end">1e-3</text>
+            <text x="48" y="75"    class="sv-label" text-anchor="end">8e-4</text>
+            <text x="48" y="112"   class="sv-label" text-anchor="end">6e-4</text>
+            <text x="48" y="149"   class="sv-label" text-anchor="end">4e-4</text>
+            <!-- x-axis labels -->
+            <text x="55"   y="173" class="sv-label" text-anchor="middle">0</text>
+            <text x="136"  y="173" class="sv-label" text-anchor="middle">2k</text>
+            <text x="217"  y="173" class="sv-label" text-anchor="middle">4k</text>
+            <text x="298"  y="173" class="sv-label" text-anchor="middle">6k</text>
+            <text x="379"  y="173" class="sv-label" text-anchor="middle">8k</text>
+            <text x="462"  y="173" class="sv-label" text-anchor="middle">10k</text>
+            <text x="258"  y="185" class="sv-label" text-anchor="middle" font-size="8">step</text>
+            <!-- annotation: ×0.9 arrow -->
+            <text x="340" y="115" class="sv-label" fill="var(--accent3)" font-size="8">×0.9 / 1k steps</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 3: Data & Evaluation ── -->
+  <div class="diagram-section">
+    <div class="section-label">03 &nbsp; Data &amp; Evaluation</div>
+
+    <div class="flow-diagram">
+      <div class="detail-row">
+
+        <div class="detail-card">
+          <div class="detail-card-title">Dataset</div>
+          <div class="detail-item"><span class="detail-key">Re cases</span><span class="detail-val accent">3000, 4000, 5000</span></div>
+          <div class="detail-item"><span class="detail-key">grid (Re4000)</span><span class="detail-val">256×256 = 65,536 pts</span></div>
+          <div class="detail-item"><span class="detail-key">grid (Re3/5k)</span><span class="detail-val">257×257 = 66,049 pts</span></div>
+          <div class="detail-item"><span class="detail-key">effective n_pts</span><span class="detail-val accent2">65,536 (min)</span></div>
+        </div>
+
+        <div class="detail-card">
+          <div class="detail-card-title">Train / Val Split</div>
+          <div class="detail-item"><span class="detail-key">train ratio</span><span class="detail-val">80%</span></div>
+          <div class="detail-item"><span class="detail-key">train pool</span><span class="detail-val accent4">52,428 pts</span></div>
+          <div class="detail-item"><span class="detail-key">val pool</span><span class="detail-val">13,108 pts</span></div>
+          <div class="detail-item"><span class="detail-key">split type</span><span class="detail-val">shared across Re</span></div>
+        </div>
+
+        <div class="detail-card">
+          <div class="detail-card-title">Validation</div>
+          <div class="detail-item"><span class="detail-key">checkpoint every</span><span class="detail-val">1,000 steps</span></div>
+          <div class="detail-item"><span class="detail-key">eval per Re</span><span class="detail-val">rel L2 = ‖ŷ−y‖/‖y‖</span></div>
+          <div class="detail-item"><span class="detail-key">metric</span><span class="detail-val accent">mean rel_L2</span></div>
+          <div class="detail-item"><span class="detail-key">val batch</span><span class="detail-val">4,096 (MPS limit)</span></div>
+        </div>
+
+        <div class="detail-card">
+          <div class="detail-card-title">Best Results &nbsp;<span style="font-size:9px;color:var(--accent4);">Run 4 (cosine)</span></div>
+          <div class="detail-item"><span class="detail-key">best val mean_rel_L2</span><span class="detail-val better accent4">0.0757 @10k</span></div>
+          <div class="detail-item"><span class="detail-key">vs Run 3 (StepLR)</span><span class="detail-val" style="color:var(--accent);">↓ 10.4%  (0.0845→0.0757)</span></div>
+          <div class="detail-item"><span class="detail-key">lr schedule</span><span class="detail-val">cosine 1e-3 → 1e-5</span></div>
+          <div class="detail-item"><span class="detail-key">device</span><span class="detail-val">MPS (Apple M-series)</span></div>
+        </div>
+
+      </div>
+
+      <!-- Training Curves Chart -->
+      <div class="chart-wrap">
+        <div class="chart-title">Validation rel_L2 — Run 3 (StepLR) vs Run 4 (Cosine)</div>
+        <div class="chart-box">
+          <svg viewBox="0 0 560 225" xmlns="http://www.w3.org/2000/svg">
+            <!-- grid -->
+            <line x1="55" y1="20"  x2="510" y2="20"  class="sv-grid"/>
+            <line x1="55" y1="61"  x2="510" y2="61"  class="sv-grid"/>
+            <line x1="55" y1="102" x2="510" y2="102" class="sv-grid"/>
+            <line x1="55" y1="143" x2="510" y2="143" class="sv-grid"/>
+            <!-- axes -->
+            <line x1="55" y1="185" x2="510" y2="185" class="sv-axis"/>
+            <line x1="55" y1="15"  x2="55"  y2="185" class="sv-axis"/>
+            <!-- Run 3 area + curve (dimmed) -->
+            <polygon class="sv-fill-purple" points="55,185 101,27.7 146,64.0 192,138.8 237,160.4 283,165.5 328,167.5 374,166.3 419,169.3 465,170.8 510,171.1 510,185"/>
+            <polyline class="sv-purple" opacity="0.35" points="101,27.7 146,64.0 192,138.8 237,160.4 283,165.5 328,167.5 374,166.3 419,169.3 465,170.8 510,171.1"/>
+            <!-- Run 4 area + curve -->
+            <polygon class="sv-fill-blue" points="55,185 101,28.3 146,71.2 192,130.6 237,151.5 283,165.8 328,168.2 374,170.2 419,171.6 465,172.3 510,172.5 510,185"/>
+            <polyline class="sv-blue" points="101,28.3 146,71.2 192,130.6 237,151.5 283,165.8 328,168.2 374,170.2 419,171.6 465,172.3 510,172.5"/>
+            <circle cx="101" cy="28.3"  r="3" class="sv-dot-blue"/>
+            <circle cx="146" cy="71.2"  r="3" class="sv-dot-blue"/>
+            <circle cx="192" cy="130.6" r="3" class="sv-dot-blue"/>
+            <circle cx="237" cy="151.5" r="3" class="sv-dot-blue"/>
+            <circle cx="283" cy="165.8" r="3" class="sv-dot-blue"/>
+            <circle cx="328" cy="168.2" r="3" class="sv-dot-blue"/>
+            <circle cx="374" cy="170.2" r="3" class="sv-dot-blue"/>
+            <circle cx="419" cy="171.6" r="3" class="sv-dot-blue"/>
+            <circle cx="465" cy="172.3" r="3" class="sv-dot-blue"/>
+            <circle cx="510" cy="172.5" r="5" class="sv-dot-blue"/>
+            <!-- key value labels (Run 4) -->
+            <text x="101" y="21"   class="sv-label" text-anchor="middle" fill="var(--accent4)">0.950</text>
+            <text x="192" y="124"  class="sv-label" text-anchor="middle" fill="var(--accent4)">0.329</text>
+            <text x="510" y="166"  class="sv-label" text-anchor="end"    fill="var(--accent4)" font-weight="600">0.076 ★</text>
+            <!-- Run 3 endpoint label -->
+            <text x="510" y="178"  class="sv-label" text-anchor="end"    fill="var(--accent3)" opacity="0.6">0.085 (R3)</text>
+            <!-- y-axis labels -->
+            <text x="48" y="24"  class="sv-label" text-anchor="end">1.00</text>
+            <text x="48" y="65"  class="sv-label" text-anchor="end">0.75</text>
+            <text x="48" y="106" class="sv-label" text-anchor="end">0.50</text>
+            <text x="48" y="147" class="sv-label" text-anchor="end">0.25</text>
+            <text x="48" y="189" class="sv-label" text-anchor="end">0</text>
+            <!-- x-axis labels -->
+            <text x="101" y="198" class="sv-label" text-anchor="middle">1k</text>
+            <text x="192" y="198" class="sv-label" text-anchor="middle">3k</text>
+            <text x="283" y="198" class="sv-label" text-anchor="middle">5k</text>
+            <text x="374" y="198" class="sv-label" text-anchor="middle">7k</text>
+            <text x="465" y="198" class="sv-label" text-anchor="middle">9k</text>
+            <text x="510" y="198" class="sv-label" text-anchor="middle">10k</text>
+            <text x="283" y="212" class="sv-label" text-anchor="middle" font-size="8">step</text>
+            <!-- legend -->
+            <line x1="60" y1="215" x2="80" y2="215" class="sv-blue"/>
+            <text x="83" y="218" class="sv-label" fill="var(--accent4)">Run 4 cosine</text>
+            <line x1="160" y1="215" x2="180" y2="215" class="sv-purple" opacity="0.5"/>
+            <text x="183" y="218" class="sv-label" fill="var(--accent3)" opacity="0.7">Run 3 StepLR</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 4: Training Analysis ── -->
+  <div class="diagram-section">
+    <div class="section-label">04 &nbsp; Training Analysis</div>
+
+    <div class="flow-diagram">
+
+      <!-- Step Timeline -->
+      <div class="tl-wrap">
+        <div class="tl-title">Checkpoint Timeline — Val rel_L2 (every 1k steps) — Run 4 Cosine Annealing</div>
+        <svg viewBox="0 0 720 110" xmlns="http://www.w3.org/2000/svg">
+          <!-- track -->
+          <line x1="55" y1="45" x2="670" y2="45" stroke="var(--accent2)" stroke-width="1" stroke-opacity="0.35"/>
+          <!-- x-axis -->
+          <line x1="55" y1="80" x2="670" y2="80" class="sv-axis"/>
+          <text x="55"  y="92" class="tl-label" text-anchor="middle">0</text>
+          <text x="116" y="92" class="tl-label" text-anchor="middle">1k</text>
+          <text x="178" y="92" class="tl-label" text-anchor="middle">2k</text>
+          <text x="239" y="92" class="tl-label" text-anchor="middle">3k</text>
+          <text x="301" y="92" class="tl-label" text-anchor="middle">4k</text>
+          <text x="363" y="92" class="tl-label" text-anchor="middle">5k</text>
+          <text x="424" y="92" class="tl-label" text-anchor="middle">6k</text>
+          <text x="486" y="92" class="tl-label" text-anchor="middle">7k</text>
+          <text x="547" y="92" class="tl-label" text-anchor="middle">8k</text>
+          <text x="609" y="92" class="tl-label" text-anchor="middle">9k</text>
+          <text x="670" y="92" class="tl-label" text-anchor="middle">10k</text>
+          <!-- checkpoints (all 10) -->
+          <circle cx="116" cy="45" r="4" class="sv-dot-blue"/>
+          <text x="116" y="34" class="sv-label" fill="var(--accent2)" text-anchor="middle">0.950</text>
+          <circle cx="178" cy="45" r="4" class="sv-dot-blue"/>
+          <text x="178" y="62" class="sv-label" fill="var(--accent2)" text-anchor="middle">0.690</text>
+          <circle cx="239" cy="45" r="5" class="sv-dot-blue"/>
+          <text x="239" y="34" class="sv-label" fill="var(--accent2)" text-anchor="middle">0.329</text>
+          <circle cx="301" cy="45" r="4" class="sv-dot-blue"/>
+          <text x="301" y="62" class="sv-label" fill="var(--accent2)" text-anchor="middle">0.203</text>
+          <circle cx="363" cy="45" r="4" class="sv-dot-blue"/>
+          <text x="363" y="34" class="sv-label" fill="var(--accent2)" text-anchor="middle">0.116</text>
+          <circle cx="424" cy="45" r="4" class="sv-dot-blue"/>
+          <text x="424" y="62" class="sv-label" fill="var(--accent2)" text-anchor="middle">0.102</text>
+          <circle cx="486" cy="45" r="4" class="sv-dot-blue"/>
+          <text x="486" y="34" class="sv-label" fill="var(--accent2)" text-anchor="middle">0.090</text>
+          <circle cx="547" cy="45" r="4" class="sv-dot-blue"/>
+          <text x="547" y="62" class="sv-label" fill="var(--accent2)" text-anchor="middle">0.081</text>
+          <circle cx="609" cy="45" r="4" class="sv-dot-blue"/>
+          <text x="609" y="34" class="sv-label" fill="var(--accent2)" text-anchor="middle">0.077</text>
+          <circle cx="670" cy="45" r="6" class="sv-dot-blue"/>
+          <text x="670" y="62" class="sv-label" fill="var(--accent2)" text-anchor="middle" font-weight="600">0.076 ★</text>
+        </svg>
+      </div>
+
+      <!-- Checkpoint Progression Table -->
+      <div class="comp-wrap">
+        <div class="comp-title">Run 4 — Checkpoint Progression (Cosine Annealing)</div>
+        <table class="comp-table">
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th style="color:var(--accent2)">val rel_L2</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1,000</td>
+              <td class="worse" style="color:var(--accent2)">0.9496</td>
+              <td style="color:var(--text-dim); font-size:10px;">Early training</td>
+            </tr>
+            <tr>
+              <td>2,000</td>
+              <td class="worse" style="color:var(--accent2)">0.6897</td>
+              <td style="color:var(--text-dim); font-size:10px;">—</td>
+            </tr>
+            <tr>
+              <td>3,000</td>
+              <td class="better" style="color:var(--accent2)">0.3294</td>
+              <td style="color:var(--text-dim); font-size:10px;">Sharp drop</td>
+            </tr>
+            <tr>
+              <td>4,000</td>
+              <td class="better" style="color:var(--accent2)">0.2029</td>
+              <td style="color:var(--text-dim); font-size:10px;">—</td>
+            </tr>
+            <tr>
+              <td>5,000</td>
+              <td class="better" style="color:var(--accent2)">0.1163</td>
+              <td style="color:var(--text-dim); font-size:10px;">—</td>
+            </tr>
+            <tr>
+              <td>6,000</td>
+              <td class="better" style="color:var(--accent2)">0.1018</td>
+              <td style="color:var(--text-dim); font-size:10px;">—</td>
+            </tr>
+            <tr>
+              <td>7,000</td>
+              <td class="better" style="color:var(--accent2)">0.0900</td>
+              <td style="color:var(--text-dim); font-size:10px;">Smooth (no bump)</td>
+            </tr>
+            <tr>
+              <td>8,000</td>
+              <td class="better" style="color:var(--accent2)">0.0813</td>
+              <td style="color:var(--text-dim); font-size:10px;">—</td>
+            </tr>
+            <tr>
+              <td>9,000</td>
+              <td class="better" style="color:var(--accent2)">0.0772</td>
+              <td style="color:var(--text-dim); font-size:10px;">—</td>
+            </tr>
+            <tr>
+              <td>10,000</td>
+              <td style="color:var(--accent2); font-weight:600">0.0757</td>
+              <td style="color:var(--accent2); font-size:10px;">Best checkpoint</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Heatmap: attention weight concept -->
+      <div class="chart-wrap">
+        <div class="chart-title">Conceptual Attention Map — Query × KV (20×20 tokens shown)</div>
+        <div class="chart-box">
+          <svg viewBox="0 0 520 200" id="heatmap-svg" xmlns="http://www.w3.org/2000/svg">
+            <!-- JS fills rects here -->
+            <g id="heatmap-cells"></g>
+            <!-- axis labels -->
+            <text x="20" y="100" class="sv-label" text-anchor="middle" transform="rotate(-90,20,100)">Query tokens (N_q)</text>
+            <text x="260" y="195" class="sv-label" text-anchor="middle">KV tokens (101: sensors + re_token)</text>
+            <!-- Re token annotation -->
+            <line x1="497" y1="10" x2="497" y2="185" stroke="var(--accent2)" stroke-width="1.5" opacity="0.7"/>
+            <text x="507" y="100" class="sv-label" fill="var(--accent2)" font-size="8" transform="rotate(90,507,100)" text-anchor="middle">re_token</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 5: Key Code ── -->
+  <div class="diagram-section">
+    <div class="section-label">05 &nbsp; Key Code</div>
+
+    <div class="flow-diagram" style="padding:0;">
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-dot cd-r"></span>
+          <span class="code-dot cd-y"></span>
+          <span class="code-dot cd-g"></span>
+          <span class="code-filename">src/pi_onet/pit_ldc.py — rff_encode &amp; CrossAttentionOperator.forward</span>
+        </div>
+        <div class="code-body">
+          <div class="code-line"><span class="ln">1</span><span class="ct"><span class="tkw">def</span> <span class="tkf">rff_encode</span>(<span class="tka">z</span>: <span class="tkt">Tensor</span>, <span class="tka">B</span>: <span class="tkt">Tensor</span>) -&gt; <span class="tkt">Tensor</span>:</span></div>
+          <div class="code-line"><span class="ln">2</span><span class="ct">    <span class="tkc"># Random Fourier Features: maps [N, 2] → [N, 2*rff_features]</span></span></div>
+          <div class="code-line"><span class="ln">3</span><span class="ct">    <span class="tkc"># B: [2, D] — shared between SensorEncoder and QueryEncoder</span></span></div>
+          <div class="code-line"><span class="ln">4</span><span class="ct">    proj = <span class="tkn">2</span> * <span class="tka">torch</span>.<span class="tkf">pi</span> * <span class="tka">z</span> @ <span class="tka">B</span>  <span class="tkc"># [N, D]</span></span></div>
+          <div class="code-line"><span class="ln">5</span><span class="ct">    <span class="tkw">return</span> <span class="tka">torch</span>.<span class="tkf">cat</span>([<span class="tka">proj</span>.<span class="tkf">sin</span>(), <span class="tka">proj</span>.<span class="tkf">cos</span>()], dim=<span class="tkn">-1</span>)  <span class="tkc"># [N, 2D]</span></span></div>
+          <div class="code-line"><span class="ln">6</span><span class="ct"></span></div>
+          <div class="code-line"><span class="ln">7</span><span class="ct"><span class="tkw">class</span> <span class="tkf">CrossAttentionOperator</span>(<span class="tkt">nn.Module</span>):</span></div>
+          <div class="code-line"><span class="ln">8</span><span class="ct">    <span class="tkw">def</span> <span class="tkf">forward</span>(<span class="tka">self</span>, <span class="tka">sensors</span>: <span class="tkt">Tensor</span>, <span class="tka">xy</span>: <span class="tkt">Tensor</span>,</span></div>
+          <div class="code-line"><span class="ln">9</span><span class="ct">                 <span class="tka">c</span>: <span class="tkt">Tensor</span>, <span class="tka">re_norm</span>: <span class="tkt">float</span>) -&gt; <span class="tkt">Tensor</span>:</span></div>
+          <div class="code-line"><span class="ln">10</span><span class="ct">        <span class="tkc"># ── Sensor branch (Key / Value) ──────────────────────</span></span></div>
+          <div class="code-line"><span class="ln">11</span><span class="ct">        sens_xy  = <span class="tka">sensors</span>[:, :<span class="tkn">2</span>]         <span class="tkc"># [Ns, 2]</span></span></div>
+          <div class="code-line"><span class="ln">12</span><span class="ct">        sens_uvp = <span class="tka">sensors</span>[:, <span class="tkn">2</span>:]         <span class="tkc"># [Ns, 3]</span></span></div>
+          <div class="code-line"><span class="ln">13</span><span class="ct">        rff_s    = <span class="tkf">rff_encode</span>(<span class="tka">sens_xy</span>, <span class="tka">self</span>.B)  <span class="tkc"># shared B</span></span></div>
+          <div class="code-line"><span class="ln">14</span><span class="ct">        kv_tok   = <span class="tka">self</span>.<span class="tkf">sensor_encoder</span>(<span class="tka">rff_s</span>, <span class="tka">sens_uvp</span>, <span class="tka">re_norm</span>)</span></div>
+          <div class="code-line"><span class="ln">15</span><span class="ct">        <span class="tkc"># kv_tok: [Ns+1, d]  (re_token prepended inside SensorEncoder)</span></span></div>
+          <div class="code-line"><span class="ln">16</span><span class="ct">        <span class="tkc"># ── Query branch ─────────────────────────────────────</span></span></div>
+          <div class="code-line"><span class="ln">17</span><span class="ct">        rff_q  = <span class="tkf">rff_encode</span>(<span class="tka">xy</span>, <span class="tka">self</span>.B)  <span class="tkc"># same B → aligned feature space</span></span></div>
+          <div class="code-line"><span class="ln">18</span><span class="ct">        cemb   = <span class="tka">self</span>.<span class="tkf">comp_embed</span>(<span class="tka">c</span>)      <span class="tkc"># Embedding(c, 8)</span></span></div>
+          <div class="code-line"><span class="ln">19</span><span class="ct">        q_tok  = <span class="tka">self</span>.<span class="tkf">query_proj</span>(<span class="tka">torch</span>.<span class="tkf">cat</span>([<span class="tka">rff_q</span>, <span class="tka">cemb</span>], <span class="tkn">-1</span>))  <span class="tkc"># [Nq, d]</span></span></div>
+          <div class="code-line"><span class="ln">20</span><span class="ct">        <span class="tkc"># ── Cross-Attention ──────────────────────────────────</span></span></div>
+          <div class="code-line"><span class="ln">21</span><span class="ct">        out = <span class="tka">self</span>.<span class="tkf">cross_attn</span>(</span></div>
+          <div class="code-line"><span class="ln">22</span><span class="ct">            query=<span class="tka">q_tok</span>, key=<span class="tka">kv_tok</span>, value=<span class="tka">kv_tok</span>  <span class="tkc"># Q from query, K/V from sensors</span></span></div>
+          <div class="code-line"><span class="ln">23</span><span class="ct">        )[<span class="tkn">0</span>]  <span class="tkc"># [Nq, d]</span></span></div>
+          <div class="code-line"><span class="ln">24</span><span class="ct">        out = <span class="tka">self</span>.<span class="tkf">out_proj</span>(<span class="tka">self</span>.<span class="tkf">norm</span>(<span class="tka">out</span>))  <span class="tkc"># [Nq, 1]</span></span></div>
+          <div class="code-line"><span class="ln">25</span><span class="ct">        <span class="tkc"># ── ComponentScaler ──────────────────────────────────</span></span></div>
+          <div class="code-line"><span class="ln">26</span><span class="ct">        s = <span class="tka">self</span>.comp_scale[<span class="tka">c</span>].unsqueeze(<span class="tkn">-1</span>)  <span class="tkc"># [Nq, 1]</span></span></div>
+          <div class="code-line"><span class="ln">27</span><span class="ct">        b = <span class="tka">self</span>.comp_bias[<span class="tka">c</span>].unsqueeze(<span class="tkn">-1</span>)</span></div>
+          <div class="code-line"><span class="ln">28</span><span class="ct">        <span class="tkw">return</span> <span class="tka">out</span> * <span class="tka">s</span> + <span class="tka">b</span>  <span class="tkc"># per-component scale/bias</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>pi-o-net / src/pi_onet/pit_ldc.py</span>
+    <span>feat/resnet-rff-architecture &nbsp;·&nbsp; 2026-03-22</span>
+  </div>
+
+</div>
+
+<script>
+/* ── Theme toggle ── */
+function toggleTheme() {
+  const html = document.documentElement;
+  const label = document.getElementById('toggle-label');
+  html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  label.textContent = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem('pit-theme', html.dataset.theme); } catch(e) {}
+  drawHeatmap();
+}
+try {
+  const saved = localStorage.getItem('pit-theme');
+  if (saved) {
+    document.documentElement.dataset.theme = saved;
+    document.getElementById('toggle-label').textContent = saved === 'dark' ? 'light' : 'dark';
+  }
+} catch(e) {}
+
+/* ── Seeded PRNG (simple LCG) ── */
+function seeded(seed) {
+  let s = seed;
+  return () => { s = (s * 1664525 + 1013904223) & 0xffffffff; return (s >>> 0) / 4294967296; };
+}
+
+/* ── Sensor map: 80 interior dots ── */
+function drawSensorMap() {
+  const g = document.getElementById('interior-sensors');
+  if (!g) return;
+  const rng = seeded(42);
+  // domain [0,1]² mapped to SVG: svgX=10+x*200, svgY=10+(1-y)*200
+  const pts = [];
+  while (pts.length < 80) {
+    const x = 0.05 + rng() * 0.90;
+    const y = 0.05 + rng() * 0.90;
+    pts.push([10 + x * 200, 10 + (1 - y) * 200]);
+  }
+  g.innerHTML = pts.map(([cx, cy]) =>
+    `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.5" class="sv-int"/>`
+  ).join('');
+}
+
+/* ── Attention heatmap (20×20 cells) ── */
+function drawHeatmap() {
+  const g = document.getElementById('heatmap-cells');
+  if (!g) return;
+  const isDark = document.documentElement.dataset.theme === 'dark';
+  // Plot area: x=[35,490], y=[10,185] → 455 wide, 175 tall → 20 cols, 20 rows
+  const left = 35, top = 10, W = 455, H = 175;
+  const cols = 20, rows = 20;
+  const cw = W / cols, ch = H / rows;
+  const rng = seeded(7);
+  const cells = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const nx = c / (cols - 1), ny = r / (rows - 1);
+      // diagonal attention + re_token column (last col)
+      const diag = Math.max(0, 1 - Math.abs(nx - ny) * 3.5);
+      const reToken = (c === cols - 1) ? 0.4 + rng() * 0.4 : 0;
+      const noise = (rng() - 0.5) * 0.06;
+      let v = Math.min(1, Math.max(0, diag + reToken + noise));
+      const x = left + c * cw, y = top + r * ch;
+      cells.push({ x, y, v });
+    }
+  }
+  // Color: dark=teal palette, light=blue palette
+  g.innerHTML = cells.map(({ x, y, v }) => {
+    const a = isDark
+      ? `rgba(74,240,196,${(v * 0.85).toFixed(3)})`
+      : `rgba(37,99,235,${(v * 0.75).toFixed(3)})`;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${cw.toFixed(1)}" height="${ch.toFixed(1)}" fill="${a}"/>`;
+  }).join('');
+  // col/row axis ticks
+  let axisHTML = '';
+  for (let c = 0; c <= cols; c += 5) {
+    const ax = left + c * cw;
+    axisHTML += `<text x="${ax}" y="192" class="sv-label" text-anchor="middle">${c}</text>`;
+  }
+  let rowLabels = document.getElementById('heatmap-axis');
+  if (!rowLabels) {
+    const svg = document.getElementById('heatmap-svg');
+    const g2 = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g2.id = 'heatmap-axis';
+    svg.appendChild(g2);
+    rowLabels = g2;
+  }
+  rowLabels.innerHTML = axisHTML;
+}
+
+/* ── Init ── */
+document.addEventListener('DOMContentLoaded', () => {
+  drawSensorMap();
+  drawHeatmap();
+});
+</script>
+
+</body>
+</html>

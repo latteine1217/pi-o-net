@@ -1,7 +1,7 @@
 [project]
 name = "pi-o-net"
 version = "0.1.0"
-description = "DeepXDE DeepONet scaffold for high-Reynolds-number Kolmogorov flow prediction."
+description = "Physics-informed Transformer (PiT) for multi-Re Lid-Driven Cavity flow."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -17,10 +17,7 @@ dev = [
 ]
 
 [project.scripts]
-train-kolmogorov-deeponet = "pi_onet.train:main"
-eval-kolmogorov-checkpoint = "pi_onet.evaluate_checkpoint:main"
-pi_onet_ldc_train = "pi_onet.ldc_train:main"
-pi_onet_pit_ldc_train = "pi_onet.pit_ldc:main"
+pit-ldc-train = "pi_onet.pit_ldc:main"
 
 [build-system]
 requires = ["hatchling"]
